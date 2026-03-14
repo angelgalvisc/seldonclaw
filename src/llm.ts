@@ -312,6 +312,17 @@ export class MockLLMClient extends LLMClient {
     };
   }
 
+  override async chat(
+    role: ProviderRole,
+    messages: Array<{ role: "user" | "assistant"; content: string }>,
+    _options: LLMRequestOptions = {}
+  ): Promise<LLMResponse> {
+    // Use last user message for matching, same logic as complete()
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+    const prompt = lastUserMsg?.content ?? "";
+    return this.complete(role, prompt, _options);
+  }
+
   override hasProvider(_role: ProviderRole): boolean {
     return true;
   }

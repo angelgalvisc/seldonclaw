@@ -333,6 +333,17 @@ describe("SQLiteGraphStore", () => {
         .prepare(`SELECT * FROM entity_aliases WHERE entity_id = ?`)
         .all(entityA) as Array<{ alias: string }>;
       expect(aliases.map((a) => a.alias)).toContain("MinEducación");
+
+      // Absorbed entity should be marked as merged
+      const mergedEntity = store.db
+        .prepare(`SELECT merged_into FROM entities WHERE id = ?`)
+        .get(entityB) as { merged_into: string | null };
+      expect(mergedEntity.merged_into).toBe(entityA);
+
+      // Absorbed entity should NOT appear in searchEntities
+      const searchResults = store.searchEntities("MinEducación");
+      const searchIds = searchResults.map((e) => e.id);
+      expect(searchIds).not.toContain(entityB);
     });
   });
 
@@ -521,10 +532,10 @@ describe("SQLiteGraphStore", () => {
         status: "running",
       });
 
-      // Community
-      store.addCommunity("comm-1", "Students", "Student community", 0.7);
-      store.addCommunity("comm-2", "Media", "Media community", 0.5);
-      store.addCommunityOverlap("comm-1", "comm-2", 0.3);
+      // Community (scoped by run_id)
+      store.addCommunity("comm-1", runId, "Students", "Student community", 0.7);
+      store.addCommunity("comm-2", runId, "Media", "Media community", 0.5);
+      store.addCommunityOverlap("comm-1", "comm-2", runId, 0.3);
 
       // Actors
       const actor1 = uuid();
@@ -771,6 +782,120 @@ describe("SQLiteGraphStore", () => {
         .get(runId) as { active_actors: number; wall_time_ms: number };
       expect(round.active_actors).toBe(10);
       expect(round.wall_time_ms).toBe(1500);
+    });
+  });
+
+  // ═══════════════════════════════════════
+  // REGRESSION TESTS for audit findings
+  // ═══════════════════════════════════════
+
+  describe("regression: community run isolation", () => {
+    it("buildPlatformState only returns communities for the given run", () => {
+      const run1 = uuid();
+      const run2 = uuid();
+
+      store.createRun({
+        id: run1,
+        started_at: new Date().toISOString(),
+        seed: 1,
+        config_snapshot: "{}",
+        graph_revision_id: "rev-1",
+        status: "running",
+      });
+      store.createRun({
+        id: run2,
+        started_at: new Date().toISOString(),
+        seed: 2,
+        config_snapshot: "{}",
+        graph_revision_id: "rev-1",
+        status: "running",
+      });
+
+      // Communities for run1
+      store.addCommunity("comm-r1", run1, "Run1 Community", undefined, 0.8);
+
+      // Communities for run2
+      store.addCommunity("comm-r2", run2, "Run2 Community", undefined, 0.6);
+
+      // Actors for run1
+      store.addActor({
+        id: "actor-r1",
+        run_id: run1,
+        entity_id: null,
+        archetype: "persona",
+        cognition_tier: "B",
+        name: "Run1 Actor",
+        handle: null,
+        personality: "test",
+        bio: null,
+        age: null,
+        gender: null,
+        profession: null,
+        region: null,
+        language: "es",
+        stance: "neutral",
+        sentiment_bias: 0,
+        activity_level: 0.5,
+        influence_weight: 0.5,
+        community_id: "comm-r1",
+        active_hours: null,
+        follower_count: 100,
+        following_count: 50,
+      });
+
+      const state1 = store.buildPlatformState(run1, 1, 5);
+      const state2 = store.buildPlatformState(run2, 1, 5);
+
+      // run1 should only see comm-r1
+      expect(state1.communities.map((c) => c.id)).toContain("comm-r1");
+      expect(state1.communities.map((c) => c.id)).not.toContain("comm-r2");
+
+      // run2 should only see comm-r2
+      expect(state2.communities.map((c) => c.id)).toContain("comm-r2");
+      expect(state2.communities.map((c) => c.id)).not.toContain("comm-r1");
+    });
+  });
+
+  describe("regression: merged entity exclusion", () => {
+    it("searchEntities excludes absorbed entities", () => {
+      store.addEntityType({ name: "person", description: "A person" });
+      const alice = store.addEntity({
+        id: uuid(),
+        type: "person",
+        name: "Alice Johnson",
+      });
+      const aliceAlt = store.addEntity({
+        id: uuid(),
+        type: "person",
+        name: "A. Johnson",
+      });
+
+      // Both should be findable before merge
+      const before = store.searchEntities("Johnson");
+      expect(before).toHaveLength(2);
+
+      // Merge aliceAlt into alice
+      store.mergeEntities(alice, aliceAlt, 0.95, "name_similarity");
+
+      // After merge, only alice should appear
+      const after = store.searchEntities("Johnson");
+      expect(after).toHaveLength(1);
+      expect(after[0].id).toBe(alice);
+    });
+
+    it("computeGraphRevisionId excludes absorbed entities", () => {
+      store.addEntityType({ name: "org", description: "Org" });
+      const a = store.addEntity({ id: uuid(), type: "org", name: "Org A" });
+      const b = store.addEntity({ id: uuid(), type: "org", name: "Org B" });
+
+      const revBefore = store.computeGraphRevisionId();
+
+      store.mergeEntities(a, b, 0.9, "manual");
+
+      const revAfter = store.computeGraphRevisionId();
+
+      // Revision should change after merge (fewer active entities)
+      expect(revAfter).not.toBe(revBefore);
     });
   });
 });

@@ -11,7 +11,7 @@
  */
 
 import Database from "better-sqlite3";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 
 // ═══════════════════════════════════════════════════════
 // TYPE DEFINITIONS — from PLAN.md §First-Class Concepts
@@ -118,6 +118,7 @@ export interface Entity {
   type: string;
   name: string;
   attributes?: string; // JSON object
+  merged_into?: string | null; // NULL = active, non-NULL = absorbed into this entity
 }
 
 export interface RawEntity {
@@ -438,7 +439,9 @@ CREATE TABLE IF NOT EXISTS entities (
   type TEXT NOT NULL,
   name TEXT NOT NULL,
   attributes TEXT,
-  FOREIGN KEY (type) REFERENCES entity_types(name)
+  merged_into TEXT,                    -- NULL = active entity, non-NULL = absorbed into this entity id
+  FOREIGN KEY (type) REFERENCES entity_types(name),
+  FOREIGN KEY (merged_into) REFERENCES entities(id)
 );
 
 CREATE TABLE IF NOT EXISTS edges (
@@ -581,18 +584,22 @@ CREATE TABLE IF NOT EXISTS edge_claims (
 
 CREATE TABLE IF NOT EXISTS communities (
   id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
   name TEXT NOT NULL,
   description TEXT,
-  cohesion REAL DEFAULT 0.5
+  cohesion REAL DEFAULT 0.5,
+  FOREIGN KEY (run_id) REFERENCES run_manifest(id)
 );
 
 CREATE TABLE IF NOT EXISTS community_overlap (
   community_a TEXT NOT NULL,
   community_b TEXT NOT NULL,
+  run_id TEXT NOT NULL,
   weight REAL NOT NULL,
-  PRIMARY KEY (community_a, community_b),
+  PRIMARY KEY (community_a, community_b, run_id),
   FOREIGN KEY (community_a) REFERENCES communities(id),
-  FOREIGN KEY (community_b) REFERENCES communities(id)
+  FOREIGN KEY (community_b) REFERENCES communities(id),
+  FOREIGN KEY (run_id) REFERENCES run_manifest(id)
 );
 
 -- ═══════════════════════════════════════
@@ -814,8 +821,8 @@ export interface GraphStore {
   ): void;
 
   // Communities
-  addCommunity(id: string, name: string, description?: string, cohesion?: number): void;
-  addCommunityOverlap(communityA: string, communityB: string, weight: number): void;
+  addCommunity(id: string, runId: string, name: string, description?: string, cohesion?: number): void;
+  addCommunityOverlap(communityA: string, communityB: string, runId: string, weight: number): void;
 
   // Platform state
   addPost(post: Post): void;
@@ -1149,6 +1156,21 @@ export class SQLiteGraphStore implements GraphStore {
       this.addAlias(keptId, mergedName.name, "merge");
     }
 
+    // Mark absorbed entity — not deleted, but excluded from active queries
+    this.db
+      .prepare(`UPDATE entities SET merged_into = ? WHERE id = ?`)
+      .run(keptId, mergedId);
+
+    // Remove absorbed entity from FTS index
+    const mergedRowid = this.db
+      .prepare(`SELECT rowid FROM entities WHERE id = ?`)
+      .get(mergedId) as { rowid: number } | undefined;
+    if (mergedRowid) {
+      this.db
+        .prepare(`DELETE FROM entities_fts WHERE rowid = ?`)
+        .run(mergedRowid.rowid);
+    }
+
     return id;
   }
 
@@ -1306,23 +1328,24 @@ export class SQLiteGraphStore implements GraphStore {
 
   addCommunity(
     id: string,
+    runId: string,
     name: string,
     description?: string,
     cohesion?: number
   ): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO communities (id, name, description, cohesion) VALUES (?, ?, ?, ?)`
+        `INSERT OR REPLACE INTO communities (id, run_id, name, description, cohesion) VALUES (?, ?, ?, ?, ?)`
       )
-      .run(id, name, description ?? null, cohesion ?? 0.5);
+      .run(id, runId, name, description ?? null, cohesion ?? 0.5);
   }
 
-  addCommunityOverlap(communityA: string, communityB: string, weight: number): void {
+  addCommunityOverlap(communityA: string, communityB: string, runId: string, weight: number): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO community_overlap (community_a, community_b, weight) VALUES (?, ?, ?)`
+        `INSERT OR REPLACE INTO community_overlap (community_a, community_b, run_id, weight) VALUES (?, ?, ?, ?)`
       )
-      .run(communityA, communityB, weight);
+      .run(communityA, communityB, runId, weight);
   }
 
   // ─── Platform state ───
@@ -1561,10 +1584,10 @@ export class SQLiteGraphStore implements GraphStore {
       });
     }
 
-    // Communities with overlaps and member lists
+    // Communities with overlaps and member lists — scoped by run_id
     const communityRows = this.db
-      .prepare(`SELECT * FROM communities`)
-      .all() as Array<{
+      .prepare(`SELECT * FROM communities WHERE run_id = ?`)
+      .all(runId) as Array<{
       id: string;
       name: string;
       description: string | null;
@@ -1578,11 +1601,11 @@ export class SQLiteGraphStore implements GraphStore {
 
       const overlapRows = this.db
         .prepare(
-          `SELECT community_b, weight FROM community_overlap WHERE community_a = ?
+          `SELECT community_b, weight FROM community_overlap WHERE community_a = ? AND run_id = ?
            UNION
-           SELECT community_a, weight FROM community_overlap WHERE community_b = ?`
+           SELECT community_a, weight FROM community_overlap WHERE community_b = ? AND run_id = ?`
         )
-        .all(c.id, c.id) as Array<{ community_b: string; weight: number }>;
+        .all(c.id, runId, c.id, runId) as Array<{ community_b: string; weight: number }>;
 
       const overlaps = new Map<string, number>();
       for (const o of overlapRows) {
@@ -1892,12 +1915,11 @@ export class SQLiteGraphStore implements GraphStore {
   // ─── Graph revision ───
 
   computeGraphRevisionId(): string {
-    const { createHash } = require("node:crypto");
     const hash = createHash("sha256");
 
-    // Hash all entities
+    // Hash all active entities (exclude absorbed)
     const entities = this.db
-      .prepare(`SELECT id, type, name, attributes FROM entities ORDER BY id`)
+      .prepare(`SELECT id, type, name, attributes FROM entities WHERE merged_into IS NULL ORDER BY id`)
       .all() as Entity[];
     hash.update(JSON.stringify(entities));
 
@@ -1929,6 +1951,7 @@ export class SQLiteGraphStore implements GraphStore {
         `SELECT e.* FROM entities e
          JOIN entities_fts fts ON fts.rowid = e.rowid
          WHERE entities_fts MATCH ?
+         AND e.merged_into IS NULL
          LIMIT ?`
       )
       .all(query, limit) as Entity[];
