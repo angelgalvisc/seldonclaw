@@ -1721,41 +1721,36 @@ with the CLI/shell phase, not before Phase 2. The core pipeline comes first.
 
 ## MVP (Phase 1)
 
-**Milestone 0 (Spike, 2-3 days):** Validate NullClaw integration before anything else.
-- GET /health → 200 OK
-- POST /a2a with `message/send` → successful round-trip
-- Convert minimal DecisionRequest → A2ADecisionMessage → parseable response
-- If this doesn't come out clean, rethink the adapter before proceeding.
+**Architecture decision:** NullClaw spike skipped. DirectLLMBackend chosen (see CLAUDE.md Phase 0).
+NullClaw integration deferred — actors only need structured LLM completions, not agent capabilities.
 
 **MVP Scope:** End-to-end pipeline with 10-20 actors, 5 rounds, X (formerly Twitter) only.
 
-| File | Priority | Effort |
+| File | Priority | Status |
 |---|---|---|
-| `db.ts` | P0 | 1 day |
-| `config.ts` | P0 | 0.5 day |
-| `llm.ts` | P0 | 0.5 day |
-| `ingest.ts` | P0 | 0.5 day |
-| `ontology.ts` | P0 | 1 day |
-| `graph.ts` (+ entity resolution/dedup) | P0 | 1.5 days |
-| `profiles.ts` | P0 | 1 day |
-| `engine.ts` | P0 | 2 days |
-| `activation.ts` | P0 | 0.5 day |
-| `feed.ts` | P0 | 1 day |
-| `cognition.ts` | P0 | 0.5 day |
-| `nullclaw-worker.ts` | P0 | 1 day |
-| `telemetry.ts` | P0 | 0.5 day |
-| `reproducibility.ts` | P0 | 1 day |
-| `ckp.ts` | P0 | 0.5 day |
-| `index.ts` (CLI) | P0 | 1 day |
-| `propagation.ts` | P1 | 1 day |
-| `fatigue.ts` | P1 | 0.5 day |
-| `events.ts` | P1 | 1 day |
-| `report.ts` | P2 | 1.5 days |
-| `interview.ts` | P2 | 1 day |
-| `shell.ts` | P2 | 1.5 days |
+| `db.ts` (types, schema, store, ids) | P0 | ✅ Phase 1 |
+| `config.ts` | P0 | ✅ Phase 1 |
+| `llm.ts` | P0 | ✅ Phase 1 |
+| `ingest.ts` | P0 | ✅ Phase 2 |
+| `ontology.ts` | P0 | ✅ Phase 2 |
+| `graph.ts` (+ entity resolution/dedup) | P0 | ✅ Phase 2 |
+| `profiles.ts` | P0 | ✅ Phase 2 |
+| `cognition.ts` | P0 | ✅ Phase 3 |
+| `reproducibility.ts` | P0 | ✅ Phase 3 |
+| `activation.ts` | P0 | ✅ Phase 4 |
+| `feed.ts` | P0 | ✅ Phase 4 |
+| `telemetry.ts` | P0 | ✅ Phase 4 |
+| `engine.ts` | P0 | ✅ Phase 5 |
+| `index.ts` (CLI) | P0 | ✅ Phase 5 |
+| `propagation.ts` | P1 | Phase 6 |
+| `fatigue.ts` | P1 | Phase 6 |
+| `events.ts` | P1 | Phase 6 |
+| `ckp.ts` | P2 | Phase 7 |
+| `report.ts` | P2 | Phase 7 |
+| `interview.ts` | P2 | Phase 7 |
+| `shell.ts` | P2 | Phase 8 |
 
-**MVP (P0): ~2-3 weeks** (14 days optimistic; the NullClaw/A2A adapter may add time).
-P0+P1: ~3-4 weeks. Complete: ~5 weeks.
+**Phases 1-5 complete** (246/246 tests). Next: Phase 6 (propagation, fatigue, events).
 
 ## Report Pipeline (report.ts)
 

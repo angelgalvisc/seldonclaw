@@ -5,8 +5,8 @@
  *                  §SimConfig providers (lines 1492-1507)
  *
  * All structured extraction uses @anthropic-ai/sdk natively.
- * NullClaw manages its own LLM client internally — not our concern here.
- * This client is used for: ontology, profiles, report, interview.
+ * DirectLLMBackend (cognition.ts) uses this client for actor decisions.
+ * Also used by: ontology, profiles, report, interview.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -78,7 +78,7 @@ export class LLMClient {
       const apiKey = process.env[providerConfig.apiKeyEnv];
       if (!apiKey) {
         // Don't throw — the provider might not be needed yet
-        // (e.g., simulation provider is for NullClaw, not this client)
+        // (e.g., API key not set for a role that won't be used this run)
         continue;
       }
 
