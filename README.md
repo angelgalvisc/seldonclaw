@@ -114,11 +114,14 @@ npm run build
 npm test
 ```
 
+For a source checkout, invoke the CLI with `node dist/index.js ...` or `npm link`.
+After the package is published, the same commands will work as `npx seldonclaw ...` or `seldonclaw ...`.
+
 ### Configuration
 
 ```bash
 # Interactive guided setup
-seldonclaw init
+node dist/index.js init
 
 # Or copy the example env file
 cp .env.example .env
@@ -127,40 +130,44 @@ cp .env.example .env
 
 The `init` command generates a `seldonclaw.config.yaml` with model selection, API key references (never raw secrets), and output directory configuration.
 
-### Run a Simulation
+### Run a Prepared Simulation Database
+
+Today, the public CLI exposes the simulation engine, reporting, interviews, CKP export/import, and shell.
+The full end-to-end pipeline commands (`run`, `ingest`, `analyze`, `generate`) still exist as planned stubs, so
+`simulate` currently expects an existing SQLite database with a run and actors already present.
 
 ```bash
-# With real LLM backend
-seldonclaw simulate --db simulation.db --run my-run --rounds 5
+# From a source checkout
+node dist/index.js simulate --db simulation.db --run my-run --rounds 5
 
 # With mock backend (no API key needed)
-seldonclaw simulate --db simulation.db --run my-run --rounds 3 --mock
+node dist/index.js simulate --db simulation.db --run my-run --rounds 3 --mock
 ```
 
 ### Analyze Results
 
 ```bash
 # Run statistics with tier breakdown
-seldonclaw stats --db simulation.db --run my-run --tiers
+node dist/index.js stats --db simulation.db --run my-run --tiers
 
 # Generate a report (metrics + LLM narrative)
-seldonclaw report --db simulation.db --run my-run
+node dist/index.js report --db simulation.db --run my-run
 
 # Interview an actor
-seldonclaw interview --db simulation.db --actor "journalist-01" --question "Why did you change your stance?"
+node dist/index.js interview --db simulation.db --actor "journalist-01" --question "Why did you change your stance?"
 
 # Interactive shell
-seldonclaw shell --db simulation.db
+node dist/index.js shell --db simulation.db
 ```
 
 ### Export/Import Agents (CKP)
 
 ```bash
 # Export an actor as a portable CKP bundle
-seldonclaw export-agent --db simulation.db --actor journalist-01 --out ./exports
+node dist/index.js export-agent --db simulation.db --actor journalist-01 --out ./exports
 
 # Import into another simulation
-seldonclaw import-agent --bundle ./exports/journalist-01 --db other-sim.db --run new-run
+node dist/index.js import-agent --bundle ./exports --db other-sim.db --run new-run
 ```
 
 ## CLI Reference
