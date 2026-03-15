@@ -26,11 +26,34 @@
 
 ## Overview
 
-SeldonClaw builds a high-fidelity social simulation environment where autonomous agents with distinct personalities, beliefs, and social connections interact on a simulated platform. Each agent decides independently — using a 3-tier cognition system — whether to post, reply, repost, or stay silent, driven by their feed, beliefs, fatigue state, and the events unfolding around them.
+SeldonClaw is an auditable social simulation engine for testing how narratives, institutions, media actors, and online communities respond to real-world scenarios. It turns source material, configurable social dynamics, and optional live web context into a replayable simulation environment where agents observe, decide, interact, and evolve across rounds.
 
-What sets SeldonClaw apart from existing social simulators like OASIS, Concordia, or S³ is **web-grounded cognition**: before making a decision, Tier A and Tier B agents can query a live search engine (via SearXNG), receive real-world context filtered by a configurable temporal cutoff, and incorporate that information into their reasoning. Results are cached in SQLite for full determinism on replay. No other social simulation framework gives agents access to external information during the simulation loop.
+Its strongest differentiator is explicit and visible: **SeldonClaw is the first social simulation engine where agents can search the real web before deciding what to say.** Tier A and Tier B actors can query a live SearXNG endpoint, receive temporally filtered context, and use that information inside the decision loop. Results are cached in SQLite, logged per actor and round, and replayable later under the same cutoff and seed.
 
-Every action is stored in a single SQLite database: deterministic, replayable, and fully auditable. Agents can be exported as portable [ClawKernel Protocol (CKP)](https://github.com/angelgalvisc/clawkernel) bundles and imported into other simulations or A2A-compatible systems.
+This makes SeldonClaw useful as both a scenario lab and an operator tool: you can stress-test communication strategies, simulate narrative shocks, interview generated actors after the run, and inspect the full chain of why a given behavior emerged. Every run lives in a single SQLite file. Every major artifact remains inspectable.
+
+## What You Give It
+
+- Source documents: briefs, reports, articles, notes, policy drafts, or scenario material
+- A simulation goal or hypothesis
+- Optional natural-language design instructions
+- Optional live web grounding through SearXNG
+- Optional search policy, feed tuning, and scenario constraints
+
+## What It Returns
+
+- A full simulated run with actors, posts, rounds, exposures, narratives, and telemetry
+- A generated `simulation.spec.json` and executable config when you use natural-language design
+- Reports, actor interviews, and shell-based analysis tools
+- CKP-exportable agents and a reproducible audit trail
+
+## Why It Exists
+
+Most agent demos optimize for spectacle. Most research simulators optimize for flexibility. SeldonClaw is built for a narrower but harder target: **high-agency simulation with auditability, reproducibility, and operator control**.
+
+At the system level, it works as a rehearsal environment for crisis communication, institutional response, reputation stress-testing, policy scenarios, and narrative competition.
+
+At the operator level, it gives researchers and builders a way to design simulations in plain English, ground agents in real source material, inject exogenous events, replay outcomes, and inspect why specific trajectories emerged.
 
 ### Key Capabilities
 
