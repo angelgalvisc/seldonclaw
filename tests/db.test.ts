@@ -50,7 +50,9 @@ describe("SQLiteGraphStore", () => {
     const tableNames = tables.map((t) => t.name);
 
     const expectedTables = [
+      "actor_interest_embeddings",
       "actor_beliefs",
+      "actor_memories",
       "actor_topics",
       "actors",
       "chunks",
@@ -72,8 +74,11 @@ describe("SQLiteGraphStore", () => {
       "narratives",
       "post_topics",
       "posts",
+      "post_embeddings",
       "rounds",
       "run_manifest",
+      "search_cache",
+      "search_requests",
       "snapshots",
       "telemetry",
     ];
@@ -100,6 +105,8 @@ describe("SQLiteGraphStore", () => {
       "idx_telemetry_actor",
       "idx_exposures_run_round",
       "idx_narratives_run_topic",
+      "idx_actor_memories_actor_round",
+      "idx_actor_memories_salience",
       "idx_actors_run",
       "idx_entity_aliases_alias",
       "idx_entity_merges_merged",
@@ -110,6 +117,10 @@ describe("SQLiteGraphStore", () => {
       "idx_actor_topics_topic",
       "idx_post_topics_topic",
       "idx_actor_beliefs_topic",
+      "idx_post_embeddings_model",
+      "idx_actor_interest_embeddings_model",
+      "idx_search_cache_lookup",
+      "idx_search_requests_actor_round",
     ];
 
     for (const idx of expectedIndices) {

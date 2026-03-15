@@ -221,6 +221,61 @@ export interface NarrativeRow {
   dominant_sentiment: number;
 }
 
+export interface ActorMemoryRow {
+  id: string;
+  run_id: string;
+  actor_id: string;
+  round_num: number;
+  kind: "reflection" | "interaction" | "narrative" | "event";
+  summary: string;
+  salience: number;
+  topic?: string | null;
+  source_post_id?: string | null;
+  source_actor_id?: string | null;
+  created_at?: string;
+}
+
+export interface PostEmbeddingRow {
+  post_id: string;
+  model_id: string;
+  vector: string;
+  content_hash: string;
+  created_at?: string;
+}
+
+export interface ActorInterestEmbeddingRow {
+  actor_id: string;
+  model_id: string;
+  vector: string;
+  profile_hash: string;
+  created_at?: string;
+}
+
+export interface SearchCacheRow {
+  id: string;
+  query: string;
+  cutoff_date: string;
+  language?: string | null;
+  categories?: string | null;
+  results: string;
+  fetched_at?: string;
+  run_id?: string | null;
+}
+
+export interface SearchRequestRow {
+  id: string;
+  run_id: string;
+  round_num: number;
+  actor_id: string;
+  query: string;
+  cutoff_date: string;
+  language?: string | null;
+  categories?: string | null;
+  cache_hit: number;
+  result_count: number;
+  created_at?: string;
+}
+
 // ─── PlatformState projections (PLAN.md §PlatformState) ───
 
 export interface PostSnapshot {
@@ -276,6 +331,8 @@ export interface PlatformState {
   actors: Map<string, ActorSnapshot>;
   communities: CommunitySnapshot[];
   exposedActors: Map<string, Set<string>>; // postId → actorIds already exposed
+  postEmbeddings?: Map<string, number[]>;
+  actorInterestEmbeddings?: Map<string, number[]>;
 }
 
 // ─── Provenance chain ───
@@ -347,6 +404,13 @@ export interface ActorContext {
   topics: Array<{ topic: string; weight: number }>;
   recentPosts: Post[];
   recentExposures: Array<{ post_id: string; reaction: string }>;
+  recentMemories: Array<{
+    kind: string;
+    summary: string;
+    salience: number;
+    round_num: number;
+    topic?: string | null;
+  }>;
 }
 
 // ─── Run manifest ───

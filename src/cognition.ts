@@ -58,6 +58,7 @@ export interface DecisionRequest {
   availableActions: string[];
   platform: "x";
   simContext: string;
+  webContext?: string;
 }
 
 export interface DecisionResponse {
@@ -401,7 +402,10 @@ export function buildSimContext(
   // 4. Stance changes in followed actors
   const stanceChanges = store.getFollowedStanceChanges(actor.id, runId, roundNum);
 
-  return formatInteractionSummary(myPosts, engagement, mentions, stanceChanges);
+  // 5. Deliberative memories persisted from previous rounds
+  const memories = store.getActorMemories(actor.id, runId, 3, 0.4);
+
+  return formatInteractionSummary(myPosts, engagement, mentions, stanceChanges, memories);
 }
 
 /**
@@ -411,7 +415,8 @@ function formatInteractionSummary(
   myPosts: Array<{ id: string; content: string; likes: number; reposts: number; comments: number }>,
   engagement: Map<string, { likes: number; reposts: number; comments: number; reach: number }>,
   mentions: Array<{ author_id: string; content: string }>,
-  stanceChanges: Array<{ actorName: string; previousStance: string; newStance: string }>
+  stanceChanges: Array<{ actorName: string; previousStance: string; newStance: string }>,
+  memories: Array<{ summary: string }>
 ): string {
   const parts: string[] = [];
 
@@ -440,6 +445,11 @@ function formatInteractionSummary(
     parts.push(`Stance changes among followed: ${changeSummaries.join("; ")}`);
   }
 
+  if (memories.length > 0) {
+    const memorySummaries = memories.slice(0, 3).map((m) => m.summary);
+    parts.push(`What you remember most: ${memorySummaries.join("; ")}`);
+  }
+
   if (parts.length === 0) {
     return "No notable recent interactions.";
   }
@@ -458,6 +468,10 @@ export function getPromptVersion(): string {
 }
 
 function buildDecisionSystemPrompt(request: DecisionRequest): string {
+  const webContextSection = request.webContext
+    ? `\nWEB CONTEXT:\n${request.webContext}\n`
+    : "";
+
   return `You are simulating a social media user on X (formerly Twitter).
 
 YOUR PERSONA:
@@ -474,6 +488,7 @@ ${Object.entries(request.actor.belief_state).map(([t, s]) => `  ${t}: ${s.toFixe
 
 INTERACTION CONTEXT:
 ${request.simContext}
+${webContextSection}
 
 You must decide what to do next. Choose ONE action from the available actions.
 Respond with valid JSON only.`;
@@ -545,7 +560,8 @@ export function buildDecisionRequest(
   beliefs: Record<string, number>,
   topics: string[],
   simContext: string,
-  roundNum: number = 0
+  roundNum: number = 0,
+  webContext?: string
 ): DecisionRequest {
   return {
     actorId: actor.id,
@@ -564,5 +580,6 @@ export function buildDecisionRequest(
     availableActions: ["post", "comment", "repost", "like", "follow", "idle"],
     platform: "x",
     simContext,
+    webContext,
   };
 }

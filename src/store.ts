@@ -22,6 +22,11 @@ import type {
   Exposure,
   Follow,
   NarrativeRow,
+  ActorMemoryRow,
+  PostEmbeddingRow,
+  ActorInterestEmbeddingRow,
+  SearchCacheRow,
+  SearchRequestRow,
   PostSnapshot,
   ActorSnapshot,
   CommunitySnapshot,
@@ -136,6 +141,13 @@ export interface GraphStore {
   addNarrative(narrative: NarrativeRow): void;
   updateNarrative(id: string, updates: Partial<NarrativeRow>): void;
   getNarrativesByRun(runId: string): NarrativeRow[];
+  addActorMemory(memory: ActorMemoryRow): void;
+  getActorMemories(
+    actorId: string,
+    runId: string,
+    limit?: number,
+    minSalience?: number
+  ): ActorMemoryRow[];
 
   // Run manifest
   createRun(manifest: RunManifest): string;
@@ -256,6 +268,22 @@ export interface GraphStore {
     cognition_tier: string;
   }>;
   getEventRounds(runId: string): number[];
+
+  // Embeddings
+  upsertPostEmbedding(embedding: PostEmbeddingRow): void;
+  getPostEmbeddings(postIds: string[], modelId: string): Map<string, number[]>;
+  upsertActorInterestEmbedding(embedding: ActorInterestEmbeddingRow): void;
+  getActorInterestEmbeddings(actorIds: string[], modelId: string): Map<string, number[]>;
+
+  // Search cache + audit
+  getSearchCache(
+    query: string,
+    cutoffDate: string,
+    language?: string | null,
+    categories?: string | null
+  ): SearchCacheRow | null;
+  upsertSearchCache(entry: SearchCacheRow): void;
+  addSearchRequest(entry: SearchRequestRow): void;
 
   // Read-only SQL execution (shell.ts query boundary)
   executeReadOnlySql(sql: string): Array<Record<string, unknown>>;
@@ -559,7 +587,23 @@ export class SQLiteGraphStore implements GraphStore {
       )
       .all(actorId, runId) as Array<{ post_id: string; reaction: string }>;
 
-    return { actor, beliefs, topics, recentPosts, recentExposures };
+    const recentMemories = this.db
+      .prepare(
+        `SELECT kind, summary, salience, round_num, topic
+         FROM actor_memories
+         WHERE actor_id = ? AND run_id = ?
+         ORDER BY salience DESC, round_num DESC
+         LIMIT 5`
+      )
+      .all(actorId, runId) as Array<{
+      kind: string;
+      summary: string;
+      salience: number;
+      round_num: number;
+      topic?: string | null;
+    }>;
+
+    return { actor, beliefs, topics, recentPosts, recentExposures, recentMemories };
   }
 
   queryNarrativeState(topic: string, runId: string): NarrativeState | null {
@@ -1050,6 +1094,43 @@ export class SQLiteGraphStore implements GraphStore {
       .all(runId) as NarrativeRow[];
   }
 
+  addActorMemory(memory: ActorMemoryRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO actor_memories
+         (id, run_id, actor_id, round_num, kind, summary, salience, topic, source_post_id, source_actor_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        memory.id,
+        memory.run_id,
+        memory.actor_id,
+        memory.round_num,
+        memory.kind,
+        memory.summary,
+        memory.salience,
+        memory.topic ?? null,
+        memory.source_post_id ?? null,
+        memory.source_actor_id ?? null
+      );
+  }
+
+  getActorMemories(
+    actorId: string,
+    runId: string,
+    limit: number = 5,
+    minSalience: number = 0
+  ): ActorMemoryRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM actor_memories
+         WHERE actor_id = ? AND run_id = ? AND salience >= ?
+         ORDER BY salience DESC, round_num DESC
+         LIMIT ?`
+      )
+      .all(actorId, runId, minSalience, limit) as ActorMemoryRow[];
+  }
+
   // ─── Run manifest ───
 
   createRun(manifest: RunManifest): string {
@@ -1501,6 +1582,138 @@ export class SQLiteGraphStore implements GraphStore {
       )
       .all(runId) as Array<{ num: number }>;
     return rows.map((r) => r.num);
+  }
+
+  upsertPostEmbedding(embedding: PostEmbeddingRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO post_embeddings (post_id, model_id, vector, content_hash)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(post_id, model_id) DO UPDATE SET
+           vector = excluded.vector,
+           content_hash = excluded.content_hash`
+      )
+      .run(
+        embedding.post_id,
+        embedding.model_id,
+        embedding.vector,
+        embedding.content_hash
+      );
+  }
+
+  getPostEmbeddings(postIds: string[], modelId: string): Map<string, number[]> {
+    const result = new Map<string, number[]>();
+    if (postIds.length === 0) return result;
+
+    const placeholders = postIds.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT post_id, vector FROM post_embeddings
+         WHERE model_id = ? AND post_id IN (${placeholders})`
+      )
+      .all(modelId, ...postIds) as Array<{ post_id: string; vector: string }>;
+
+    for (const row of rows) {
+      result.set(row.post_id, JSON.parse(row.vector) as number[]);
+    }
+    return result;
+  }
+
+  upsertActorInterestEmbedding(embedding: ActorInterestEmbeddingRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO actor_interest_embeddings (actor_id, model_id, vector, profile_hash)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(actor_id, model_id) DO UPDATE SET
+           vector = excluded.vector,
+           profile_hash = excluded.profile_hash`
+      )
+      .run(
+        embedding.actor_id,
+        embedding.model_id,
+        embedding.vector,
+        embedding.profile_hash
+      );
+  }
+
+  getActorInterestEmbeddings(actorIds: string[], modelId: string): Map<string, number[]> {
+    const result = new Map<string, number[]>();
+    if (actorIds.length === 0) return result;
+
+    const placeholders = actorIds.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT actor_id, vector FROM actor_interest_embeddings
+         WHERE model_id = ? AND actor_id IN (${placeholders})`
+      )
+      .all(modelId, ...actorIds) as Array<{ actor_id: string; vector: string }>;
+
+    for (const row of rows) {
+      result.set(row.actor_id, JSON.parse(row.vector) as number[]);
+    }
+    return result;
+  }
+
+  getSearchCache(
+    query: string,
+    cutoffDate: string,
+    language?: string | null,
+    categories?: string | null
+  ): SearchCacheRow | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM search_cache
+         WHERE query = ?
+           AND cutoff_date = ?
+           AND COALESCE(language, '') = COALESCE(?, '')
+           AND COALESCE(categories, '') = COALESCE(?, '')`
+      )
+      .get(query, cutoffDate, language ?? null, categories ?? null) as SearchCacheRow | undefined;
+    return row ?? null;
+  }
+
+  upsertSearchCache(entry: SearchCacheRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO search_cache
+         (id, query, cutoff_date, language, categories, results, fetched_at, run_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(query, cutoff_date, language, categories) DO UPDATE SET
+           results = excluded.results,
+           fetched_at = excluded.fetched_at,
+           run_id = excluded.run_id`
+      )
+      .run(
+        entry.id,
+        entry.query,
+        entry.cutoff_date,
+        entry.language ?? null,
+        entry.categories ?? null,
+        entry.results,
+        entry.fetched_at ?? new Date().toISOString(),
+        entry.run_id ?? null
+      );
+  }
+
+  addSearchRequest(entry: SearchRequestRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO search_requests
+         (id, run_id, round_num, actor_id, query, cutoff_date, language, categories, cache_hit, result_count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        entry.id,
+        entry.run_id,
+        entry.round_num,
+        entry.actor_id,
+        entry.query,
+        entry.cutoff_date,
+        entry.language ?? null,
+        entry.categories ?? null,
+        entry.cache_hit,
+        entry.result_count
+      );
   }
 
   executeReadOnlySql(sql: string): Array<Record<string, unknown>> {

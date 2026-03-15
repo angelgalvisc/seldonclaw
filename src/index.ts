@@ -27,6 +27,7 @@ import { ingestDirectory } from "./ingest.js";
 import { extractOntology } from "./ontology.js";
 import { buildKnowledgeGraph } from "./graph.js";
 import { generateProfiles } from "./profiles.js";
+import { checkSearchHealth, createSearchProvider } from "./search.js";
 import type { RunManifest } from "./db.js";
 import { existsSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -191,6 +192,9 @@ interface InitAnswers {
   apiKeyEnv: string;
   outputDir: string;
   timezone: string;
+  searchEnabled: boolean;
+  searchEndpoint: string;
+  searchCutoffDate: string;
 }
 
 function renderInitConfig(answers: InitAnswers): string {
@@ -224,6 +228,18 @@ function renderInitConfig(answers: InitAnswers): string {
     `    model: "${answers.reportModel}"`,
     `    apiKeyEnv: "${answers.apiKeyEnv}"`,
     "",
+    "search:",
+    `  enabled: ${answers.searchEnabled ? "true" : "false"}`,
+    `  endpoint: "${answers.searchEndpoint}"`,
+    `  cutoffDate: "${answers.searchCutoffDate}"`,
+    "  strictCutoff: true",
+    '  enabledTiers: ["A", "B"]',
+    "  maxResultsPerQuery: 5",
+    "  maxQueriesPerActor: 2",
+    '  categories: "news"',
+    '  defaultLanguage: "auto"',
+    "  timeoutMs: 3000",
+    "",
     "output:",
     `  dir: "${answers.outputDir}"`,
     '  format: "markdown"',
@@ -253,6 +269,9 @@ export async function runInitCommand(
     apiKeyEnv: "ANTHROPIC_API_KEY",
     outputDir: "./output",
     timezone: defaultConfig().simulation.timezone,
+    searchEnabled: false,
+    searchEndpoint: defaultConfig().search.endpoint,
+    searchCutoffDate: defaultConfig().search.cutoffDate,
   };
 
   let answers: InitAnswers = defaults;
@@ -262,12 +281,24 @@ export async function runInitCommand(
     prompt ??= createPromptSession();
     try {
       io.stdout("SeldonClaw setup\n");
+      const enableSearchAnswer = await prompt.ask(
+        "Enable SearXNG web search (yes/no)",
+        defaults.searchEnabled ? "yes" : "no"
+      );
+      const searchEnabled = parseBooleanAnswer(enableSearchAnswer);
       answers = {
         simulationModel: await prompt.ask("Simulation model", defaults.simulationModel),
         reportModel: await prompt.ask("Report model", defaults.reportModel),
         apiKeyEnv: await prompt.ask("API key env var", defaults.apiKeyEnv),
         outputDir: await prompt.ask("Output directory", defaults.outputDir),
         timezone: await prompt.ask("Timezone", defaults.timezone),
+        searchEnabled,
+        searchEndpoint: searchEnabled
+          ? await prompt.ask("SearXNG endpoint", defaults.searchEndpoint)
+          : defaults.searchEndpoint,
+        searchCutoffDate: searchEnabled
+          ? await prompt.ask("Search cutoff date (ISO)", defaults.searchCutoffDate)
+          : defaults.searchCutoffDate,
       };
     } finally {
       prompt.close();
@@ -283,6 +314,9 @@ export async function runInitCommand(
       ? `  [PASS] ${answers.apiKeyEnv} is set\n`
       : `  [WARN] ${answers.apiKeyEnv} is not set yet\n`
   );
+  if (answers.searchEnabled) {
+    io.stdout(`  [INFO] Web search enabled at ${answers.searchEndpoint}\n`);
+  }
 
   try {
     const testStore = new SQLiteGraphStore(":memory:");
@@ -293,6 +327,10 @@ export async function runInitCommand(
   }
 
   io.stdout('Next: run "seldonclaw doctor" to validate the full setup.\n');
+}
+
+function parseBooleanAnswer(value: string): boolean {
+  return /^(y|yes|true|1)$/i.test(value.trim());
 }
 
 async function runSimulateCommand(
@@ -882,7 +920,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
     .command("doctor")
     .description("Run diagnostic checks")
     .option("--config <path>", "config file path", "seldonclaw.config.yaml")
-    .action((opts) => {
+    .action(async (opts) => {
       let passed = 0;
       let failed = 0;
 
@@ -915,6 +953,20 @@ export function createProgram(io: CliIO = defaultIO): Command {
                 io.stdout(`  [FAIL] ${role}: ${envVar} not set\n`);
                 failed++;
               }
+            }
+          }
+
+          if (config.search.enabled) {
+            try {
+              const provider = createSearchProvider(config.search);
+              await checkSearchHealth(provider, config.search);
+              io.stdout(`  [PASS] search: SearXNG reachable at ${config.search.endpoint}\n`);
+              passed++;
+            } catch (err) {
+              io.stdout(
+                `  [FAIL] search: SearXNG not reachable at ${config.search.endpoint} (${formatErrorMessage(err)})\n`
+              );
+              failed++;
             }
           }
         } catch (err) {

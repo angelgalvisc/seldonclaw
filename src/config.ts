@@ -19,6 +19,7 @@ export interface SimConfig {
   cognition: CognitionConfig;
   providers: ProvidersConfig;
   nullclaw: NullClawConfig;
+  search: SearchConfig;
   feed: FeedConfig;
   propagation: PropagationConfig;
   fatigue: FatigueConfig;
@@ -87,6 +88,23 @@ export interface FeedConfig {
   popularityWeight: number;
   relevanceWeight: number;
   echoChamberStrength: number;
+  embeddingEnabled: boolean;
+  embeddingWeight: number;
+  embeddingModel: string;
+  embeddingDimensions: number;
+}
+
+export interface SearchConfig {
+  enabled: boolean;
+  endpoint: string;
+  cutoffDate: string;
+  strictCutoff: boolean;
+  enabledTiers: Array<"A" | "B">;
+  maxResultsPerQuery: number;
+  maxQueriesPerActor: number;
+  categories: string;
+  defaultLanguage: string;
+  timeoutMs: number;
 }
 
 export interface PropagationConfig {
@@ -206,12 +224,28 @@ const DEFAULTS: SimConfig = {
       capabilities: ["decide", "interview"],
     },
   },
+  search: {
+    enabled: false,
+    endpoint: "http://localhost:8888",
+    cutoffDate: "9999-12-31",
+    strictCutoff: true,
+    enabledTiers: ["A", "B"],
+    maxResultsPerQuery: 5,
+    maxQueriesPerActor: 2,
+    categories: "news",
+    defaultLanguage: "auto",
+    timeoutMs: 3000,
+  },
   feed: {
     size: 20,
     recencyWeight: 0.4,
     popularityWeight: 0.3,
     relevanceWeight: 0.3,
     echoChamberStrength: 0.5,
+    embeddingEnabled: false,
+    embeddingWeight: 0.25,
+    embeddingModel: "hash-embedding-v1",
+    embeddingDimensions: 32,
   },
   propagation: {
     viralThreshold: 30,
@@ -425,6 +459,93 @@ function validateConfig(config: SimConfig): void {
       new ConfigError(
         `feed weights must sum to ~1.0 (got ${weightSum.toFixed(3)})`,
         "feed.weights"
+      )
+    );
+  }
+  if (
+    config.feed.embeddingWeight < 0 ||
+    config.feed.embeddingWeight > 1
+  ) {
+    errors.push(
+      new ConfigError(
+        "embeddingWeight must be between 0 and 1",
+        "feed.embeddingWeight"
+      )
+    );
+  }
+  if (config.feed.embeddingDimensions < 4) {
+    errors.push(
+      new ConfigError(
+        "embeddingDimensions must be >= 4",
+        "feed.embeddingDimensions"
+      )
+    );
+  }
+
+  // Search
+  if (config.search.maxResultsPerQuery < 1) {
+    errors.push(
+      new ConfigError(
+        "maxResultsPerQuery must be >= 1",
+        "search.maxResultsPerQuery"
+      )
+    );
+  }
+  if (config.search.maxQueriesPerActor < 0) {
+    errors.push(
+      new ConfigError(
+        "maxQueriesPerActor must be >= 0",
+        "search.maxQueriesPerActor"
+      )
+    );
+  }
+  if (config.search.timeoutMs < 100) {
+    errors.push(
+      new ConfigError(
+        "timeoutMs must be >= 100",
+        "search.timeoutMs"
+      )
+    );
+  }
+  if (config.search.enabledTiers.length === 0) {
+    errors.push(
+      new ConfigError(
+        "enabledTiers must contain at least one tier",
+        "search.enabledTiers"
+      )
+    );
+  }
+  if (
+    config.search.enabledTiers.some(
+      (tier) => tier !== "A" && tier !== "B"
+    )
+  ) {
+    errors.push(
+      new ConfigError(
+        'enabledTiers may only contain "A" and "B"',
+        "search.enabledTiers"
+      )
+    );
+  }
+  if (
+    config.search.enabled &&
+    !/^https?:\/\//.test(config.search.endpoint)
+  ) {
+    errors.push(
+      new ConfigError(
+        "endpoint must start with http:// or https:// when search is enabled",
+        "search.endpoint"
+      )
+    );
+  }
+  if (
+    config.search.cutoffDate &&
+    Number.isNaN(Date.parse(config.search.cutoffDate))
+  ) {
+    errors.push(
+      new ConfigError(
+        "cutoffDate must be a valid ISO date or datetime",
+        "search.cutoffDate"
       )
     );
   }

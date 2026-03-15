@@ -7,7 +7,13 @@
  * 3. Return an ordered action batch for a single commit phase in engine.ts
  */
 
-import type { ActorRow, FeedItem, GraphStore, SimEvent } from "./db.js";
+import type {
+  ActorRow,
+  FeedItem,
+  GraphStore,
+  SearchRequestRow,
+  SimEvent,
+} from "./db.js";
 import type { SimConfig } from "./config.js";
 import type {
   CognitionBackend,
@@ -23,6 +29,16 @@ import {
   routeCognition,
 } from "./cognition.js";
 import type { PlatformState, PRNG } from "./db.js";
+import type { SearchProvider } from "./search.js";
+import {
+  buildSearchQueries,
+  formatSearchResults,
+  resolveSearchLanguage,
+  searchWithCache,
+  shouldSearchTier,
+  toSearchRequestEntries,
+  type SearchExecution,
+} from "./search.js";
 
 export interface ScheduledActorAction {
   index: number;
@@ -31,6 +47,7 @@ export interface ScheduledActorAction {
   feed: FeedItem[];
   route: CognitionRoute;
   decision: DecisionResponse;
+  searchRequests: SearchRequestRow[];
 }
 
 interface PendingBackendDecision {
@@ -40,6 +57,7 @@ interface PendingBackendDecision {
   feed: FeedItem[];
   route: CognitionRoute;
   request: DecisionRequest;
+  searchQueries: string[];
 }
 
 export interface RoundSchedulerOptions {
@@ -55,6 +73,7 @@ export interface RoundSchedulerOptions {
   actorTopicsMap: Map<string, string[]>;
   actorBeliefsMap: Map<string, Record<string, number>>;
   lookbackRounds?: number;
+  searchProvider?: SearchProvider | null;
 }
 
 export async function scheduleRoundActions(
@@ -86,6 +105,7 @@ export async function scheduleRoundActions(
         feed,
         route,
         decision: applyTierCRules(actor, feed, opts.config.cognition, opts.rng),
+        searchRequests: [],
       });
       continue;
     }
@@ -105,6 +125,16 @@ export async function scheduleRoundActions(
       simContext,
       opts.roundNum
     );
+    const searchQueries =
+      opts.searchProvider && shouldSearchTier(route.tier, opts.config.search)
+        ? buildSearchQueries(
+            actor,
+            actorTopics,
+            opts.activeEvents,
+            feed,
+            opts.config.search
+          )
+        : [];
 
     pending.push({
       index,
@@ -113,6 +143,7 @@ export async function scheduleRoundActions(
       feed,
       route,
       request,
+      searchQueries,
     });
   }
 
@@ -125,11 +156,61 @@ export async function scheduleRoundActions(
       actorTopics: job.actorTopics,
       feed: job.feed,
       route: job.route,
-      decision: await opts.backend.decide(job.request),
+      ...(await resolveBackendDecision(job, opts)),
     })
   );
 
   return [...immediate, ...resolved].sort((a, b) => a.index - b.index);
+}
+
+async function resolveBackendDecision(
+  job: PendingBackendDecision,
+  opts: RoundSchedulerOptions
+): Promise<{
+  decision: DecisionResponse;
+  searchRequests: SearchRequestRow[];
+}> {
+  let request = job.request;
+  let searchRequests: SearchRequestRow[] = [];
+
+  if (opts.searchProvider && job.searchQueries.length > 0) {
+    const language = resolveSearchLanguage(job.actor.language, opts.config.search);
+    const executions: SearchExecution[] = [];
+
+    for (const query of job.searchQueries) {
+      try {
+        executions.push(
+          await searchWithCache({
+            store: opts.store,
+            provider: opts.searchProvider,
+            runId: opts.runId,
+            query,
+            config: opts.config.search,
+            language,
+          })
+        );
+      } catch {
+        // Search is optional. Degrade gracefully to feed-only cognition.
+      }
+    }
+
+    const webContext = formatSearchResults(executions, opts.config.search.cutoffDate);
+    if (webContext) {
+      request = { ...request, webContext };
+    }
+    searchRequests = toSearchRequestEntries(
+      opts.runId,
+      opts.roundNum,
+      job.actor.id,
+      opts.config.search.cutoffDate,
+      executions
+    );
+  }
+
+  return {
+    decision: await opts.backend.decide(request),
+    searchRequests,
+  };
 }
 
 async function mapWithConcurrency<T, R>(

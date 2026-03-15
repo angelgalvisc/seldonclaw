@@ -230,6 +230,29 @@ describe("runSimulation — core loop", () => {
     expect(run!.finished_at).toBeTruthy();
     expect(run!.total_rounds).toBe(5);
   });
+
+  it("persists deliberative memories for Tier A/B actors", async () => {
+    const runId = "run-memories";
+    seedActors(runId, 3);
+    backend.setDefault({
+      action: "post",
+      content: "This issue now defines the conversation.",
+      reasoning: "The education narrative is escalating and I want to frame it early.",
+    });
+
+    await runSimulation({
+      store,
+      config: makeTestConfig({ totalHours: 1 }),
+      backend,
+      runId,
+    });
+
+    const memories = (store as any).db
+      .prepare("SELECT COUNT(*) as c FROM actor_memories WHERE run_id = ?")
+      .get(runId).c as number;
+
+    expect(memories).toBeGreaterThan(0);
+  });
 });
 
 // ═══════════════════════════════════════════════════════

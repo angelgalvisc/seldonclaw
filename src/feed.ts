@@ -18,9 +18,9 @@ import type {
   PlatformState,
   PostSnapshot,
   FeedItem,
-  CommunitySnapshot,
 } from "./db.js";
 import type { FeedConfig } from "./config.js";
+import { embeddingSimilarity } from "./embeddings.js";
 
 // ═══════════════════════════════════════════════════════
 // BUILD FEED
@@ -73,6 +73,10 @@ export function buildFeed(
       popularity * config.popularityWeight +
       relevance * config.relevanceWeight +
       affinity * 0.1;
+
+    if (config.embeddingEnabled) {
+      score += embeddingSimilarity(actor.id, post.id, state) * config.embeddingWeight;
+    }
 
     // Echo chamber: boost aligned sentiment
     if (actorCommunity && sameSign(post.sentiment, actor.sentiment_bias)) {

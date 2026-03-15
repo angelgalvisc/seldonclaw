@@ -47,6 +47,13 @@ describe("config.ts", () => {
 
       expect(config.feed.size).toBe(20);
       expect(config.feed.recencyWeight + config.feed.popularityWeight + config.feed.relevanceWeight).toBeCloseTo(1.0);
+      expect(config.feed.embeddingEnabled).toBe(false);
+      expect(config.feed.embeddingModel).toBe("hash-embedding-v1");
+      expect(config.feed.embeddingDimensions).toBe(32);
+      expect(config.search.enabled).toBe(false);
+      expect(config.search.endpoint).toBe("http://localhost:8888");
+      expect(config.search.enabledTiers).toEqual(["A", "B"]);
+      expect(config.search.maxResultsPerQuery).toBe(5);
 
       expect(config.propagation.viralThreshold).toBe(30);
       expect(config.fatigue.decayRate).toBe(0.05);
@@ -139,6 +146,22 @@ feed:
   popularityWeight: 0.3
   relevanceWeight: 0.3
   echoChamberStrength: 0.5
+  embeddingEnabled: false
+  embeddingWeight: 0.25
+  embeddingModel: "hash-embedding-v1"
+  embeddingDimensions: 32
+
+search:
+  enabled: false
+  endpoint: "http://localhost:8888"
+  cutoffDate: "2026-03-01"
+  strictCutoff: true
+  enabledTiers: ["A", "B"]
+  maxResultsPerQuery: 5
+  maxQueriesPerActor: 2
+  categories: "news"
+  defaultLanguage: "auto"
+  timeoutMs: 3000
 
 propagation:
   viralThreshold: 30
@@ -167,6 +190,7 @@ output:
       expect(config.simulation.timezone).toBe("America/Bogota");
       expect(config.cognition.tierA.archetypeOverrides).toContain("media");
       expect(config.nullclaw.gatewayUrl).toBe("http://localhost:3000");
+      expect(config.search.cutoffDate).toBe("2026-03-01");
     });
   });
 
@@ -236,6 +260,43 @@ feed:
   recencyWeight: 0.5
   popularityWeight: 0.5
   relevanceWeight: 0.5
+`);
+      }).toThrow(ConfigError);
+    });
+
+    it("rejects search tiers outside A/B", () => {
+      expect(() => {
+        parseConfig(`
+search:
+  enabledTiers: ["A", "C"]
+`);
+      }).toThrow(ConfigError);
+    });
+
+    it("rejects invalid search endpoint when enabled", () => {
+      expect(() => {
+        parseConfig(`
+search:
+  enabled: true
+  endpoint: "localhost:8888"
+`);
+      }).toThrow(ConfigError);
+    });
+
+    it("rejects invalid cutoffDate", () => {
+      expect(() => {
+        parseConfig(`
+search:
+  cutoffDate: "not-a-date"
+`);
+      }).toThrow(ConfigError);
+    });
+
+    it("rejects embeddingWeight > 1", () => {
+      expect(() => {
+        parseConfig(`
+feed:
+  embeddingWeight: 1.5
 `);
       }).toThrow(ConfigError);
     });

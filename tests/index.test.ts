@@ -7,7 +7,8 @@
  * - error path when no runs exist
  */
 
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -412,10 +413,13 @@ describe("CLI init", () => {
       capture.io,
       {
         ask: async (question, defaultValue) => {
+          if (question.includes("Enable SearXNG web search")) return "yes";
           if (question.includes("Simulation model")) return "claude-haiku-4-20250414";
           if (question.includes("Report model")) return "claude-sonnet-4-20250514";
           if (question.includes("API key env var")) return "CUSTOM_API_KEY";
           if (question.includes("Output directory")) return "./reports";
+          if (question.includes("SearXNG endpoint")) return "http://localhost:8888";
+          if (question.includes("Search cutoff date")) return "2026-03-01";
           return defaultValue ?? "";
         },
         close: () => {},
@@ -425,6 +429,106 @@ describe("CLI init", () => {
     const contents = readFileSync(configPath, "utf-8");
     expect(contents).toContain('apiKeyEnv: "CUSTOM_API_KEY"');
     expect(contents).toContain('dir: "./reports"');
+    expect(contents).toContain("enabled: true");
+    expect(contents).toContain('cutoffDate: "2026-03-01"');
+    expect(contents).toContain("search:");
+    expect(contents).toContain('endpoint: "http://localhost:8888"');
     expect(contents).not.toContain("sk-");
   });
 });
+
+describe("CLI doctor", () => {
+  it("checks search health when search is enabled", async () => {
+    process.env.TEST_PROVIDER_KEY = "set";
+
+    const server = await createSearchServer();
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("failed to acquire search server address");
+      }
+
+      const dir = mkdtempSync(join(tmpdir(), "seldonclaw-doctor-"));
+      tempDirs.push(dir);
+      const configPath = join(dir, "seldonclaw.config.yaml");
+      writeFileSync(
+        configPath,
+        [
+          "simulation:",
+          '  platform: "x"',
+          "providers:",
+          "  analysis:",
+          '    sdk: "anthropic"',
+          '    model: "claude-sonnet-4-20250514"',
+          '    apiKeyEnv: "TEST_PROVIDER_KEY"',
+          "  generation:",
+          '    sdk: "anthropic"',
+          '    model: "claude-sonnet-4-20250514"',
+          '    apiKeyEnv: "TEST_PROVIDER_KEY"',
+          "  simulation:",
+          '    model: "claude-haiku-4-20250414"',
+          '    apiKeyEnv: "TEST_PROVIDER_KEY"',
+          "  report:",
+          '    sdk: "anthropic"',
+          '    model: "claude-sonnet-4-20250514"',
+          '    apiKeyEnv: "TEST_PROVIDER_KEY"',
+          "search:",
+          "  enabled: true",
+          `  endpoint: "http://127.0.0.1:${address.port}"`,
+          '  cutoffDate: "2026-03-01"',
+          "  strictCutoff: true",
+          '  enabledTiers: ["A", "B"]',
+          "  maxResultsPerQuery: 5",
+          "  maxQueriesPerActor: 2",
+          '  categories: "news"',
+          '  defaultLanguage: "auto"',
+          "  timeoutMs: 3000",
+          "output:",
+          '  dir: "./output"',
+          '  format: "both"',
+          "",
+        ].join("\n"),
+        "utf-8"
+      );
+
+      const capture = makeIO();
+      await runCli(
+        ["node", "seldonclaw", "doctor", "--config", configPath],
+        capture.io
+      );
+
+      expect(capture.getStdout()).toContain("[PASS] search: SearXNG reachable");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+      delete process.env.TEST_PROVIDER_KEY;
+    }
+  });
+});
+
+async function createSearchServer(): Promise<Server> {
+  const server = createServer((req, res) => {
+    if (req.url?.startsWith("/search")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        results: [
+          {
+            title: "Health check",
+            url: "https://example.com/health",
+            content: "Search endpoint is healthy.",
+            publishedDate: "2026-02-28T00:00:00.000Z",
+          },
+        ],
+      }));
+      return;
+    }
+    res.writeHead(404).end();
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(0, "127.0.0.1", (err?: Error) => (err ? reject(err) : resolve()));
+  });
+
+  return server;
+}

@@ -36,7 +36,7 @@ export interface InterviewSession {
  * Build a natural-language string from ActorContext for use as LLM context.
  */
 export function formatActorContext(context: ActorContext): string {
-  const { actor, beliefs, topics, recentPosts } = context;
+  const { actor, beliefs, topics, recentPosts, recentMemories } = context;
   const lines: string[] = [];
 
   lines.push(`Name: ${actor.name} | Handle: @${actor.handle ?? actor.name} | Archetype: ${actor.archetype}`);
@@ -59,6 +59,13 @@ export function formatActorContext(context: ActorContext): string {
     for (const p of recentPosts.slice(0, 5)) {
       const snippet = p.content.length > 80 ? p.content.slice(0, 80) + "..." : p.content;
       lines.push(`  "${snippet}" (${p.likes} likes)`);
+    }
+  }
+
+  if (recentMemories.length > 0) {
+    lines.push(`Recent memories:`);
+    for (const memory of recentMemories.slice(0, 3)) {
+      lines.push(`  [${memory.kind}] ${memory.summary}`);
     }
   }
 

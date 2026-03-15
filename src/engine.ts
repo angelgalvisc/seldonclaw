@@ -33,6 +33,12 @@ import { processEvents } from "./events.js";
 import { propagate } from "./propagation.js";
 import { updateFatigue } from "./fatigue.js";
 import { scheduleRoundActions } from "./scheduler.js";
+import { persistActorMemories } from "./memory.js";
+import {
+  attachEmbeddingsToPlatformState,
+  createEmbeddingProvider,
+} from "./embeddings.js";
+import { createSearchProvider } from "./search.js";
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -100,6 +106,12 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
 
   const allActors = store.getActorsByRun(runId);
   const activationConfig = deriveActivationConfig(config);
+  const embeddingProvider = config.feed.embeddingEnabled
+    ? createEmbeddingProvider(config.feed)
+    : null;
+  const searchProvider = config.search.enabled
+    ? createSearchProvider(config.search)
+    : null;
 
   // Simulation start time (round 0 = 2024-01-01T00:00:00 in configured timezone)
   const startTime = new Date("2024-01-01T00:00:00");
@@ -200,18 +212,30 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
       );
 
       // Stage actor decisions deterministically, then resolve Tier A/B with bounded concurrency.
+      const feedState = embeddingProvider
+        ? await attachEmbeddingsToPlatformState({
+            state,
+            store,
+            provider: embeddingProvider,
+            actors: activeActors,
+            actorTopicsMap,
+            actorBeliefsMap,
+          })
+        : state;
+
       const scheduledActions = await scheduleRoundActions({
         activeActors,
         store,
         runId,
         roundNum,
-        state,
+        state: feedState,
         config,
         backend,
         rng,
         activeEvents,
         actorTopicsMap,
         actorBeliefsMap,
+        searchProvider,
       });
 
       let totalPosts = 0;
@@ -252,7 +276,20 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
               feedSize: executable.feed.length,
             })
           );
+
+          for (const searchRequest of scheduled.searchRequests) {
+            store.addSearchRequest(searchRequest);
+          }
         }
+
+        persistActorMemories(
+          store,
+          runId,
+          roundNum,
+          scheduledActions,
+          activeEvents,
+          updatedNarratives
+        );
 
         // ── Phase 6: Propagation (AFTER execute) ──
         // Intentional one-round latency: propagation uses `state` built at the

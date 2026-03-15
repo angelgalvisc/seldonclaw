@@ -165,6 +165,16 @@ describe("hashDecisionRequest", () => {
     expect(a).not.toBe(b);
   });
 
+  it("webContext participates in the request hash", () => {
+    const a = hashDecisionRequest(makeRequest());
+    const b = hashDecisionRequest(
+      makeRequest({
+        webContext: "RECENT WEB INFORMATION (cutoff: 2026-03-01):\n1. News item",
+      })
+    );
+    expect(a).not.toBe(b);
+  });
+
   it("hash is a 64-char hex string (SHA-256)", () => {
     const hash = hashDecisionRequest(makeRequest());
     expect(hash).toMatch(/^[0-9a-f]{64}$/);

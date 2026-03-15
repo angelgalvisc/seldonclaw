@@ -168,6 +168,7 @@ export function hashDecisionRequest(request: DecisionRequest): string {
     availableActions: request.availableActions,
     platform: request.platform,
     simContext: request.simContext,
+    webContext: request.webContext ?? null,
   });
   return hashString(canonical);
 }

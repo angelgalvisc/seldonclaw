@@ -35,6 +35,10 @@ const defaultFeedConfig: FeedConfig = {
   popularityWeight: 0.3,
   relevanceWeight: 0.3,
   echoChamberStrength: 0.5,
+  embeddingEnabled: false,
+  embeddingWeight: 0.25,
+  embeddingModel: "hash-embedding-v1",
+  embeddingDimensions: 32,
 };
 
 function makeActor(overrides: Partial<ActorRow> = {}): ActorRow {
@@ -92,6 +96,7 @@ function makePlatformState(
     engagementByPost: new Map(),
     actors: new Map(),
     communities: [],
+    exposedActors: new Map(),
     ...overrides,
   };
 }
@@ -253,6 +258,38 @@ describe("buildFeed — scoring", () => {
       ["education"]
     );
     expect(feed[0].post.id).toBe("rel");
+  });
+
+  it("embedding similarity boosts aligned candidates when enabled", () => {
+    const aligned = makePost({ id: "aligned", authorId: "a1", roundNum: 5, topics: ["misc"] });
+    const distant = makePost({ id: "distant", authorId: "a2", roundNum: 5, topics: ["misc"] });
+    const state = makePlatformState({
+      recentPosts: [aligned, distant],
+      actors: new Map([
+        ["a1", { id: "a1", communityId: "", influenceWeight: 0.5, stance: "neutral", sentimentBias: 0 }],
+        ["a2", { id: "a2", communityId: "", influenceWeight: 0.5, stance: "neutral", sentimentBias: 0 }],
+      ]),
+      postEmbeddings: new Map([
+        ["aligned", [1, 0]],
+        ["distant", [0, 1]],
+      ]),
+      actorInterestEmbeddings: new Map([["actor-1", [1, 0]]]),
+    });
+
+    const feed = buildFeed(
+      makeActor(),
+      state,
+      {
+        ...defaultFeedConfig,
+        recencyWeight: 0,
+        popularityWeight: 0,
+        relevanceWeight: 0,
+        embeddingEnabled: true,
+        embeddingWeight: 0.8,
+      }
+    );
+
+    expect(feed[0].post.id).toBe("aligned");
   });
 });
 

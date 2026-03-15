@@ -310,6 +310,72 @@ CREATE TABLE IF NOT EXISTS narratives (
   FOREIGN KEY (run_id) REFERENCES run_manifest(id)
 );
 
+CREATE TABLE IF NOT EXISTS actor_memories (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  round_num INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  salience REAL NOT NULL,
+  topic TEXT,
+  source_post_id TEXT,
+  source_actor_id TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (run_id) REFERENCES run_manifest(id),
+  FOREIGN KEY (actor_id) REFERENCES actors(id),
+  FOREIGN KEY (source_post_id) REFERENCES posts(id),
+  FOREIGN KEY (source_actor_id) REFERENCES actors(id)
+);
+
+CREATE TABLE IF NOT EXISTS post_embeddings (
+  post_id TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  vector TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (post_id, model_id),
+  FOREIGN KEY (post_id) REFERENCES posts(id)
+);
+
+CREATE TABLE IF NOT EXISTS actor_interest_embeddings (
+  actor_id TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  vector TEXT NOT NULL,
+  profile_hash TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (actor_id, model_id),
+  FOREIGN KEY (actor_id) REFERENCES actors(id)
+);
+
+CREATE TABLE IF NOT EXISTS search_cache (
+  id TEXT PRIMARY KEY,
+  query TEXT NOT NULL,
+  cutoff_date TEXT NOT NULL,
+  language TEXT,
+  categories TEXT,
+  results TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  run_id TEXT,
+  UNIQUE(query, cutoff_date, language, categories)
+);
+
+CREATE TABLE IF NOT EXISTS search_requests (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  round_num INTEGER NOT NULL,
+  actor_id TEXT NOT NULL,
+  query TEXT NOT NULL,
+  cutoff_date TEXT NOT NULL,
+  language TEXT,
+  categories TEXT,
+  cache_hit INTEGER NOT NULL DEFAULT 0,
+  result_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (run_id) REFERENCES run_manifest(id),
+  FOREIGN KEY (actor_id) REFERENCES actors(id)
+);
+
 -- ═══════════════════════════════════════
 -- TELEMETRY + ROUNDS
 -- ═══════════════════════════════════════
@@ -391,6 +457,8 @@ CREATE INDEX IF NOT EXISTS idx_telemetry_run_round ON telemetry(run_id, round_nu
 CREATE INDEX IF NOT EXISTS idx_telemetry_actor ON telemetry(actor_id, run_id);
 CREATE INDEX IF NOT EXISTS idx_exposures_run_round ON exposures(run_id, round_num);
 CREATE INDEX IF NOT EXISTS idx_narratives_run_topic ON narratives(run_id, topic);
+CREATE INDEX IF NOT EXISTS idx_actor_memories_actor_round ON actor_memories(run_id, actor_id, round_num DESC);
+CREATE INDEX IF NOT EXISTS idx_actor_memories_salience ON actor_memories(run_id, actor_id, salience DESC);
 CREATE INDEX IF NOT EXISTS idx_actors_run ON actors(run_id);
 CREATE INDEX IF NOT EXISTS idx_entity_aliases_alias ON entity_aliases(alias);
 CREATE INDEX IF NOT EXISTS idx_entity_merges_merged ON entity_merges(merged_entity_id);
@@ -401,4 +469,8 @@ CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_actor_topics_topic ON actor_topics(topic);
 CREATE INDEX IF NOT EXISTS idx_post_topics_topic ON post_topics(topic);
 CREATE INDEX IF NOT EXISTS idx_actor_beliefs_topic ON actor_beliefs(topic);
+CREATE INDEX IF NOT EXISTS idx_post_embeddings_model ON post_embeddings(model_id);
+CREATE INDEX IF NOT EXISTS idx_actor_interest_embeddings_model ON actor_interest_embeddings(model_id);
+CREATE INDEX IF NOT EXISTS idx_search_cache_lookup ON search_cache(query, cutoff_date, language, categories);
+CREATE INDEX IF NOT EXISTS idx_search_requests_actor_round ON search_requests(run_id, actor_id, round_num DESC);
 `;
