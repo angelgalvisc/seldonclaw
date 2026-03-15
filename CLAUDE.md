@@ -39,15 +39,16 @@ CognitionBackend interface allows future NullClaw swap if agent capabilities bec
 
 These three do NOT depend on each other. Can be built in parallel.
 
-### Step 1.1: db.ts ✅
+### Step 1.1: db.ts (now split: types.ts + schema.ts + store.ts + ids.ts + barrel db.ts) ✅
 
-**Ref:** PLAN.md §SQLite Schema (lines 145-581), §GraphStore interface (lines 774-807)
+**Ref:** PLAN.md §SQLite Schema, §GraphStore interface (store.ts)
 
 - [x] SQLite schema bootstrap for fresh databases — all Phase 1 tables and indices implemented
 - [x] PRAGMAs: WAL, FK, busy_timeout
-- [x] `GraphStore` interface (all methods including interaction history + buildPlatformState)
+- [x] `GraphStore` interface (60+ methods, canonical in store.ts)
 - [x] `SQLiteGraphStore` implementation (v1)
 - [x] Types: `PostSnapshot`, `ActorSnapshot`, `CommunitySnapshot`, `EngagementStats`, `StanceChange`
+- [x] Refactored: split into types.ts (DTOs), schema.ts (DDL), store.ts (interface+impl), ids.ts (uuid+stableId), db.ts (barrel)
 
 **Verification:**
 - [x] `new SQLiteGraphStore('test.db')` creates all tables (19 tests pass)
@@ -311,13 +312,13 @@ NullClawBackend remains defined in CognitionBackend interface for future swap if
 
 ## Phase 5: Engine + CLI — MVP ✅ COMPLETE
 
-248/248 tests (15 test files). Main simulation loop and CLI entry point.
+246/246 tests (15 test files). Main simulation loop and CLI entry point.
 
 ### Step 5.1: engine.ts ✅
 
 - [x] Main loop: for each round → activation → feed → decide → execute → telemetry
 - [x] `buildPlatformState()` at start of each round (via GraphStore)
-- [x] Bulk `getActorTopicsByRun()` / `getActorBeliefsByRun()` (added to db.ts)
+- [x] Bulk `getActorTopicsByRun()` / `getActorBeliefsByRun()` (in store.ts, via db.ts barrel)
 - [x] Persist changes to SQLite per actor (addPost, addExposure, addFollow, etc.)
 - [x] Snapshot every N rounds (rng_state for resume)
 - [x] `RoundContext` construction (simTimestamp, simHour, activeEvents, rng)
@@ -477,7 +478,7 @@ NullClawBackend remains defined in CognitionBackend interface for future swap if
 | **0: Spike** | spike script | 2-3 | A2A round-trip works |
 | **1: Foundation** | db.ts, config.ts, llm.ts | 3 | Schema + config + LLM client |
 | **2: Pipeline** | ingest, ontology, graph, profiles | 4 | Actors in DB from documents |
-| **3: Cognition** | cognition, nullclaw-worker, reproducibility | 3 | decide() end-to-end + replay |
+| **3: Cognition** | cognition, reproducibility | 3 | decide() end-to-end + replay |
 | **4: Social** | activation, feed, telemetry | 2.5 | Modules testable in isolation |
 | **5: Engine** | engine.ts, index.ts | 3 | **MVP: `seldonclaw run` works** |
 | **6: Dynamics** | propagation, fatigue, events | 2.5 | Simulation with social dynamics |
@@ -493,7 +494,7 @@ These are the non-negotiable contracts. If implementation deviates, update PLAN.
 
 | Contract | Location | Rule |
 |---|---|---|
-| GraphStore interface | PLAN.md lines 774-807 | All methods must be implemented in SQLiteGraphStore |
+| GraphStore interface | store.ts (canonical), PLAN.md §GraphStore | All methods must be implemented in SQLiteGraphStore |
 | PlatformState projection | PLAN.md lines 674-736 | Read-only snapshot, rebuilt each round, never written to by modules |
 | RoundContext | PLAN.md lines 738-755 | Uses `activeEvents` (not `events`), no full SimConfig |
 | PRNG everywhere | PLAN.md lines 851, 1009, 1035 | `round.rng.next()`, never `Math.random()` |

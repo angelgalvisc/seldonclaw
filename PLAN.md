@@ -94,8 +94,11 @@ NullClaw Gateway is optional — only needed if `NullClawBackend` is configured 
 seldonclaw/
 ├── src/
 │   ├── index.ts              # Entry point + CLI (commander)
-│   ├── tools.ts              # Operator tools layer: typed handlers reused by CLI, shell, future UI
-│   ├── db.ts                 # SQLite schema bootstrap, GraphStore interface + SQLiteGraphStore
+│   ├── db.ts                 # Barrel re-export (types + schema + store + ids)
+│   ├── types.ts              # Domain types: rows, snapshots, DTOs
+│   ├── schema.ts             # SQLite DDL (SCHEMA_SQL constant)
+│   ├── store.ts              # GraphStore interface + SQLiteGraphStore
+│   ├── ids.ts                # uuid() + stableId() helpers
 │   ├── config.ts             # Config loader (seldonclaw.config.yaml) + sanitizeForStorage()
 │   ├── llm.ts                # Multi-provider LLM client (Anthropic native + OpenAI compat)
 │   ├── ingest.ts             # Document parsing (MD/TXT, optional PDF)
@@ -105,30 +108,36 @@ seldonclaw/
 │   ├── engine.ts             # Main simulation loop (rounds)
 │   ├── activation.ts         # Actor activation per round
 │   ├── feed.ts               # Feed ranking + partial exposure
-│   ├── propagation.ts        # Cross-community contagion (SIR-like)
-│   ├── fatigue.ts            # Narrative decay + re-activation
-│   ├── events.ts             # Event scheduling + threshold triggers
 │   ├── cognition.ts          # CognitionRouter + DecisionPolicy + CognitionBackend interface
-│   ├── nullclaw-worker.ts    # NullClawBackend (HTTP gateway, optional)
-│   ├── ckp.ts                # CKP manifest I/O, export-agent/import-agent bundle + scrubSecrets()
 │   ├── telemetry.ts          # Structured event logging to SQLite + sanitizeDetail()
 │   ├── reproducibility.ts    # seed, decision_cache, RecordedBackend, snapshots, run_manifest
-│   ├── report.ts             # Normalized SQL only → structured findings → LLM narrative
-│   ├── interview.ts          # Interview actors via CognitionBackend
-│   └── shell.ts              # Interactive REPL: natural language → SQL queries + interviews
-├── templates/
-│   ├── persona.claw.yaml     # Archetype: individual person
-│   ├── organization.claw.yaml # Archetype: org spokesperson
-│   ├── media.claw.yaml       # Archetype: media outlet
-│   └── institution.claw.yaml # Archetype: government/university
+│   ├── propagation.ts        # Phase 6 — NOT YET IMPLEMENTED
+│   ├── fatigue.ts            # Phase 6 — NOT YET IMPLEMENTED
+│   ├── events.ts             # Phase 6 — NOT YET IMPLEMENTED
+│   ├── ckp.ts                # Phase 7 — NOT YET IMPLEMENTED
+│   ├── report.ts             # Phase 7 — NOT YET IMPLEMENTED
+│   ├── interview.ts          # Phase 7 — NOT YET IMPLEMENTED
+│   └── shell.ts              # Phase 8 — NOT YET IMPLEMENTED
+├── templates/                   # Phase 7 — placeholder (empty)
 ├── package.json
 ├── tsconfig.json
 ├── seldonclaw.config.yaml       # Default config
 └── tests/
-    ├── engine.test.ts
+    ├── db.test.ts
+    ├── ingest.test.ts
+    ├── ontology.test.ts
+    ├── graph.test.ts
+    ├── profiles.test.ts
+    ├── config.test.ts
+    ├── llm.test.ts
+    ├── cognition.test.ts
     ├── activation.test.ts
     ├── feed.test.ts
-    ├── propagation.test.ts
+    ├── telemetry.test.ts
+    ├── reproducibility.test.ts
+    ├── reproducibility-prng.test.ts
+    ├── engine.test.ts
+    ├── index.test.ts
     └── fixtures/
         └── sample-docs/
 ```
@@ -768,40 +777,33 @@ interface NarrativeState {
 
 Persisted in the `narratives` table (scoped by `run_id`). Projected into memory by `engine.ts` at the start of each round, same pattern as `ActorState`.
 
-### GraphStore interface (db.ts)
+### GraphStore interface (store.ts)
 
-```typescript
-// v1 = SQLiteGraphStore. v2 could be GraphitiAdapter.
-interface GraphStore {
-  // Provenance
-  addDocument(doc: Document): string;
-  addChunk(chunk: Chunk): string;
-  addClaim(claim: Claim): string;
+Canonical interface: `src/store.ts`. Summary by domain (60+ methods):
 
-  // Entity resolution
-  resolveEntities(candidates: RawEntity[]): Entity[];   // dedup + merge + alias
-  linkClaimToEntity(entityId: string, claimId: string): void;
-
-  // Queries
-  queryActorContext(actorId: string): ActorContext;
-  queryNarrativeState(topic: string, runId: string): NarrativeState;
-  queryProvenance(entityId: string): ProvenanceChain;    // entity → claims → chunks → documents
-
-  // Platform state
-  addPost(post: Post): void;
-  addExposure(exposure: Exposure): void;
-  getActorFeed(actorId: string, roundNum: number, config: FeedConfig): FeedItem[];
-
-  // Interaction history (for buildSimContext in cognition.ts)
-  getRecentPostsByActor(actorId: string, runId: string, sinceRound: number): Post[];
-  getEngagementOnPosts(postIds: string[], runId: string): Map<string, EngagementStats>;
-  getMentions(actorId: string, runId: string, sinceRound: number): Post[];          // posts that reply_to or @mention this actor
-  getFollowedStanceChanges(actorId: string, runId: string, roundNum: number): StanceChange[];
-
-  // Platform state projection (for engine.ts → PlatformState)
-  buildPlatformState(runId: string, roundNum: number, lookbackRounds: number): PlatformState;
-}
-```
+| Domain | Methods | Notes |
+|--------|---------|-------|
+| Provenance | addDocument, addChunk, addClaim | Returns ID |
+| Ontology | addEntityType, addEdgeType | INSERT OR REPLACE |
+| Entity resolution | addEntity, addEdge, resolveEntities, linkClaimToEntity, linkClaimToEdge, addAlias, mergeEntities | Dedup + merge + alias |
+| Bulk queries | getActorTopicsByRun, getActorBeliefsByRun | Avoids N+1 per round |
+| Core queries | queryActorContext, queryNarrativeState, queryProvenance | Projections from DB |
+| Actors | addActor, getActor, getActorsByRun, updateActorStance, updateActorCommunity, addActorTopic, addActorBelief | CRUD |
+| Communities | addCommunity, addCommunityOverlap | With overlap weights |
+| Platform state | addPost, addExposure, addFollow, updatePostEngagement, addPostTopic | Write ops |
+| Interaction history | getRecentPostsByActor, getEngagementOnPosts, getMentions, getFollowedStanceChanges | For cognition.ts |
+| Platform projection | buildPlatformState | Read-only snapshot |
+| Narratives | addNarrative, updateNarrative, getNarrativesByRun | Scoped by run_id |
+| Run manifest | createRun, updateRun, getRun, getLatestRunId, getRunRoundSummary, getRunTierCallTotals | Lifecycle |
+| Decision cache | cacheDecision, lookupDecision | Reproducibility |
+| Snapshots | saveSnapshot, getLatestSnapshot | rng_state + actor_states |
+| Telemetry | logTelemetry | Structured logging |
+| Rounds | upsertRound | UPSERT per round |
+| Graph revision | computeGraphRevisionId | SHA-256 of entities+edges+merges |
+| FTS | searchEntities | FTS5 |
+| Provenance queries | getDocumentByHash, getChunksByDocument, getAllDocuments | Dedup + downstream |
+| Graph queries | getClaimsByChunk, getEntityTypes, getEdgeTypes, getAllActiveEntities | For graph.ts |
+| Utility | close | |
 
 ### Entity resolution (graph.ts, P0)
 
@@ -895,6 +897,13 @@ function buildFeed(
   //    return topN(scored, config.feedSize)  // Actor doesn't see EVERYTHING
 }
 ```
+
+### Known Stubs (Phase 6 integration points)
+
+These stubs exist in implemented code and will be replaced when Phase 6 modules are built:
+
+- `engine.ts`: `const activeEvents: SimEvent[] = [];` — events array hardcoded empty until events.ts is implemented
+- `activation.ts`: `const fatiguePenalty = 0;` — fatigue penalty hardcoded to 0 until fatigue.ts is implemented
 
 ### propagation.ts — How does content cross between communities?
 
