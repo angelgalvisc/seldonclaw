@@ -27,10 +27,16 @@ import type { EventConfig, ThresholdTrigger } from "./config.js";
  * 2. Scheduled events (matching round number)
  * 3. Threshold triggers (conditions evaluated against state)
  */
+/**
+ * @param firedTriggers — conditions already fired in previous rounds.
+ *   Prevents threshold triggers from re-firing every round while the
+ *   condition remains true. Engine.ts maintains this set across rounds.
+ */
 export function processEvents(
   roundNum: number,
   config: EventConfig,
-  state: PlatformState
+  state: PlatformState,
+  firedTriggers?: Set<string>
 ): SimEvent[] {
   const events: SimEvent[] = [];
 
@@ -42,6 +48,7 @@ export function processEvents(
         round: 0,
         content: post.content,
         topics: post.topics,
+        actorArchetype: post.actorArchetype,
         actor_id: undefined,
       });
     }
@@ -55,23 +62,28 @@ export function processEvents(
         round: roundNum,
         content: scheduled.content,
         topics: scheduled.topics,
+        actorArchetype: scheduled.actorArchetype,
         actor_id: undefined,
       });
     }
   }
 
-  // 3. Threshold triggers
+  // 3. Threshold triggers (fire-once: skip if already fired)
   for (const trigger of config.thresholdTriggers) {
+    if (firedTriggers?.has(trigger.condition)) continue;
+
     const { fired, matchedTopics } = evaluateCondition(
       trigger.condition,
       state
     );
     if (fired) {
+      firedTriggers?.add(trigger.condition);
       events.push({
         type: "threshold_trigger",
         round: roundNum,
         content: trigger.event,
         topics: matchedTopics,
+        actorArchetype: trigger.actorArchetype,
         actor_id: undefined,
       });
     }

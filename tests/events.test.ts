@@ -302,6 +302,90 @@ describe("processEvents — edge cases", () => {
 });
 
 // ═══════════════════════════════════════════════════════
+// FIRE-ONCE COOLDOWN (firedTriggers)
+// ═══════════════════════════════════════════════════════
+
+describe("processEvents — firedTriggers cooldown", () => {
+  const negativePosts = Array.from({ length: 10 }, (_, i) =>
+    makePost({ id: `post-${i}`, topics: ["tuition"], sentiment: -0.8 })
+  );
+  const triggerConfig: EventConfig = {
+    ...emptyConfig,
+    thresholdTriggers: [
+      {
+        condition: "avgSentiment(topic) < -0.6",
+        event: "Institutional response",
+        actorArchetype: "institution",
+      },
+    ],
+  };
+
+  it("trigger fires on first encounter", () => {
+    const firedTriggers = new Set<string>();
+    const state = makeState({ recentPosts: negativePosts });
+    const events = processEvents(5, triggerConfig, state, firedTriggers);
+    expect(events).toHaveLength(1);
+    expect(firedTriggers.has("avgSentiment(topic) < -0.6")).toBe(true);
+  });
+
+  it("trigger does NOT re-fire on subsequent rounds", () => {
+    const firedTriggers = new Set<string>();
+    const state = makeState({ recentPosts: negativePosts });
+
+    // First round: fires
+    processEvents(5, triggerConfig, state, firedTriggers);
+    expect(firedTriggers.size).toBe(1);
+
+    // Second round: same condition still true, but should NOT fire again
+    const events2 = processEvents(6, triggerConfig, state, firedTriggers);
+    expect(events2).toHaveLength(0);
+  });
+
+  it("different triggers fire independently", () => {
+    const manyPosts = Array.from({ length: 55 }, (_, i) =>
+      makePost({ id: `post-${i}`, topics: ["protest"], sentiment: -0.8 })
+    );
+    const config: EventConfig = {
+      ...emptyConfig,
+      thresholdTriggers: [
+        {
+          condition: "avgSentiment(topic) < -0.6",
+          event: "Sentiment response",
+          actorArchetype: "institution",
+        },
+        {
+          condition: "postCount(topic) > 50",
+          event: "Volume response",
+          actorArchetype: "media",
+        },
+      ],
+    };
+
+    const firedTriggers = new Set<string>();
+    const state = makeState({ recentPosts: manyPosts });
+
+    const events = processEvents(5, config, state, firedTriggers);
+    expect(events).toHaveLength(2);
+    expect(firedTriggers.size).toBe(2);
+
+    // Neither fires again
+    const events2 = processEvents(6, config, state, firedTriggers);
+    expect(events2).toHaveLength(0);
+  });
+
+  it("without firedTriggers param, triggers fire every round (backward compat)", () => {
+    const state = makeState({ recentPosts: negativePosts });
+
+    const events1 = processEvents(5, triggerConfig, state);
+    expect(events1).toHaveLength(1);
+
+    // Without firedTriggers, fires again
+    const events2 = processEvents(6, triggerConfig, state);
+    expect(events2).toHaveLength(1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
 // evaluateCondition (exported for direct testing)
 // ═══════════════════════════════════════════════════════
 

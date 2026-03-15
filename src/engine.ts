@@ -101,6 +101,9 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
   // Simulation start time (round 0 = 2024-01-01T00:00:00 in configured timezone)
   const startTime = new Date("2024-01-01T00:00:00");
 
+  // Threshold triggers fire once and are remembered across rounds
+  const firedTriggers = new Set<string>();
+
   try {
     // 2. Per-round loop
     for (let roundNum = 0; roundNum < numRounds; roundNum++) {
@@ -117,7 +120,31 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
       const state = store.buildPlatformState(runId, roundNum, 5);
 
       // ── Phase 6: Events (BEFORE activation) ──
-      const activeEvents = processEvents(roundNum, config.events, state);
+      const activeEvents = processEvents(roundNum, config.events, state, firedTriggers);
+
+      // Materialize events as posts so they enter feeds and propagation
+      for (const event of activeEvents) {
+        const authorId = findEventAuthor(allActors, event);
+        if (authorId) event.actor_id = authorId;
+        const postId = stableId("event", runId, event.type, String(roundNum), event.content.slice(0, 20));
+        const eventPost: Post = {
+          id: postId,
+          run_id: runId,
+          author_id: authorId ?? "system",
+          content: event.content,
+          round_num: roundNum,
+          sim_timestamp: simTimestamp,
+          likes: 0,
+          reposts: 0,
+          comments: 0,
+          reach: 0,
+          sentiment: 0,
+        };
+        store.addPost(eventPost);
+        for (const topic of event.topics) {
+          store.addPostTopic(postId, topic);
+        }
+      }
 
       // ── Phase 6: Fatigue decay + re-activation ──
       const narratives = store.getNarrativesByRun(runId);
@@ -244,7 +271,11 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
         );
       }
 
-      // ── Phase 6: Propagation (AFTER execute, spreads previous rounds' posts) ──
+      // ── Phase 6: Propagation (AFTER execute) ──
+      // Intentional one-round latency: propagation uses `state` built at the
+      // start of this round, so it spreads posts from PREVIOUS rounds.
+      // Posts created in the current round (including event posts) will be
+      // propagated next round. A post cannot spread the instant it's created.
       const propagationResult = propagate(state, config.propagation, roundNum, rng);
       for (const [postId, delta] of propagationResult.reachDeltas) {
         store.updatePostEngagement(postId, "reach", delta);
@@ -447,6 +478,19 @@ function executeDecision(
 // ═══════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════
+
+/**
+ * Find an actor matching the event's actorArchetype.
+ * Returns the first matching actor's ID, or undefined if no match.
+ */
+function findEventAuthor(
+  actors: ActorRow[],
+  event: SimEvent
+): string | undefined {
+  if (!event.actorArchetype) return undefined;
+  const match = actors.find((a) => a.archetype === event.actorArchetype);
+  return match?.id;
+}
 
 function computeSimTimestamp(
   startTime: Date,

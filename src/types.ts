@@ -304,6 +304,7 @@ export interface SimEvent {
   type: "initial_post" | "scheduled" | "threshold_trigger";
   round: number;
   actor_id?: string;
+  actorArchetype?: string;
   content: string;
   topics: string[];
 }
