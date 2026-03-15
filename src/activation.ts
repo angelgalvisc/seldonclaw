@@ -13,8 +13,9 @@
  * All decisions use the seeded PRNG for determinism.
  */
 
-import type { ActorRow, RoundContext, SimEvent } from "./db.js";
+import type { ActorRow, RoundContext, SimEvent, NarrativeRow } from "./db.js";
 import type { ActivationConfig } from "./config.js";
+import { computeFatiguePenalty } from "./fatigue.js";
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -40,7 +41,8 @@ export function computeActivation(
   actors: ActorRow[],
   round: RoundContext,
   config: ActivationConfig,
-  actorTopicsMap?: Map<string, string[]>
+  actorTopicsMap?: Map<string, string[]>,
+  narratives?: NarrativeRow[]
 ): ActivationResult {
   const sorted = [...actors].sort((a, b) => a.id.localeCompare(b.id));
 
@@ -67,8 +69,10 @@ export function computeActivation(
       ? config.eventBoostMultiplier
       : 1.0;
 
-    // Fatigue penalty (stub — Phase 6 will integrate fatigue.ts)
-    const fatiguePenalty = 0;
+    // Fatigue penalty — reduces activation for actors on exhausted topics
+    const fatiguePenalty = narratives
+      ? computeFatiguePenalty(topics, narratives, config.fatiguePenaltyWeight)
+      : 0;
 
     const finalProb = clamp01(
       baseProb * hourMult * eventBoost + fatiguePenalty

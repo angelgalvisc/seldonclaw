@@ -275,6 +275,7 @@ export interface PlatformState {
   engagementByPost: Map<string, EngagementStats>;
   actors: Map<string, ActorSnapshot>;
   communities: CommunitySnapshot[];
+  exposedActors: Map<string, Set<string>>; // postId → actorIds already exposed
 }
 
 // ─── Provenance chain ───

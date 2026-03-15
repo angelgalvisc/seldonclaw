@@ -956,6 +956,22 @@ export class SQLiteGraphStore implements GraphStore {
       };
     });
 
+    // Exposure history (postId → set of exposed actorIds)
+    const exposedActors = new Map<string, Set<string>>();
+    const exposureRows = this.db
+      .prepare(
+        `SELECT post_id, actor_id FROM exposures WHERE run_id = ? AND round_num >= ?`
+      )
+      .all(runId, sinceRound) as Array<{ post_id: string; actor_id: string }>;
+    for (const e of exposureRows) {
+      let set = exposedActors.get(e.post_id);
+      if (!set) {
+        set = new Set();
+        exposedActors.set(e.post_id, set);
+      }
+      set.add(e.actor_id);
+    }
+
     return {
       runId,
       recentPosts,
@@ -963,6 +979,7 @@ export class SQLiteGraphStore implements GraphStore {
       engagementByPost,
       actors,
       communities,
+      exposedActors,
     };
   }
 

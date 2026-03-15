@@ -5,7 +5,7 @@
  *                  CLAUDE.md Phase 5.1
  *
  * Orchestrates all modules per round:
- *   activation → feed → cognition → execute → telemetry
+ *   events → fatigue → activation → feed → cognition → execute → propagation → telemetry
  *
  * Pure orchestration — no LLM logic here. Delegates to:
  *   - activation.ts (who comes online)
@@ -35,6 +35,9 @@ import {
 import { logAction, updateRound } from "./telemetry.js";
 import { SeedablePRNG, saveSnapshot } from "./reproducibility.js";
 import { stableId, uuid } from "./db.js";
+import { processEvents } from "./events.js";
+import { propagate } from "./propagation.js";
+import { updateFatigue } from "./fatigue.js";
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -103,15 +106,47 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
     for (let roundNum = 0; roundNum < numRounds; roundNum++) {
       const roundT0 = Date.now();
 
-      // Build RoundContext
       const simTimestamp = computeSimTimestamp(
         startTime,
         roundNum,
         config.simulation.minutesPerRound
       );
       const simHour = computeSimHour(simTimestamp);
-      const activeEvents: SimEvent[] = []; // Phase 6 stub
 
+      // Build PlatformState (read-only snapshot for this round)
+      const state = store.buildPlatformState(runId, roundNum, 5);
+
+      // ── Phase 6: Events (BEFORE activation) ──
+      const activeEvents = processEvents(roundNum, config.events, state);
+
+      // ── Phase 6: Fatigue decay + re-activation ──
+      const narratives = store.getNarrativesByRun(runId);
+      const { updated: updatedNarratives } = updateFatigue(
+        narratives,
+        roundNum,
+        config.fatigue
+      );
+
+      // Re-activate extinct narratives if events touch their topics
+      const eventTopics = new Set(activeEvents.flatMap((e) => e.topics));
+      for (const narrative of updatedNarratives) {
+        if (
+          eventTopics.has(narrative.topic) &&
+          narrative.current_intensity < config.fatigue.extinctionThreshold
+        ) {
+          narrative.current_intensity = Math.min(
+            1.0,
+            narrative.current_intensity + config.fatigue.reactivationBoost
+          );
+          narrative.peak_round = roundNum;
+        }
+        store.updateNarrative(narrative.id, {
+          current_intensity: narrative.current_intensity,
+          peak_round: narrative.peak_round,
+        });
+      }
+
+      // Build RoundContext with real events
       const round: RoundContext = {
         runId,
         roundNum,
@@ -121,19 +156,17 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
         rng,
       };
 
-      // Build PlatformState
-      const state = store.buildPlatformState(runId, roundNum, 5);
-
       // Load actor topics map (bulk)
       const actorTopicsMap = store.getActorTopicsByRun(runId);
       const actorBeliefsMap = store.getActorBeliefsByRun(runId);
 
-      // Activation
+      // Activation (with fatigue penalty from narratives)
       const { activeActors } = computeActivation(
         allActors,
         round,
         activationConfig,
-        actorTopicsMap
+        actorTopicsMap,
+        updatedNarratives
       );
 
       // Per-actor processing
@@ -209,6 +242,15 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
           decision.action,
           JSON.stringify(decision)
         );
+      }
+
+      // ── Phase 6: Propagation (AFTER execute, spreads previous rounds' posts) ──
+      const propagationResult = propagate(state, config.propagation, roundNum, rng);
+      for (const [postId, delta] of propagationResult.reachDeltas) {
+        store.updatePostEngagement(postId, "reach", delta);
+      }
+      for (const exposure of propagationResult.newExposures) {
+        store.addExposure(exposure);
       }
 
       // Update round aggregates

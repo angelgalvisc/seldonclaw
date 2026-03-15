@@ -101,6 +101,19 @@ export interface FatigueConfig {
   reactivationBoost: number;
 }
 
+export interface InitialPost {
+  content: string;
+  topics: string[];
+  actorArchetype?: string;
+}
+
+export interface ScheduledEvent {
+  round: number;
+  content: string;
+  topics: string[];
+  actorArchetype?: string;
+}
+
 export interface ThresholdTrigger {
   condition: string;
   event: string;
@@ -108,8 +121,8 @@ export interface ThresholdTrigger {
 }
 
 export interface EventConfig {
-  initialPosts: unknown[];
-  scheduled: unknown[];
+  initialPosts: InitialPost[];
+  scheduled: ScheduledEvent[];
   thresholdTriggers: ThresholdTrigger[];
 }
 
