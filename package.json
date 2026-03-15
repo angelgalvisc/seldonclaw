@@ -1,15 +1,45 @@
 {
   "name": "seldonclaw",
   "version": "0.1.0",
+  "description": "Auditable social simulation engine with SQLite-first runs, replayability, and CKP actor portability.",
+  "license": "Apache-2.0",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/",
+    "LICENSE",
+    "README.md",
+    ".env.example"
+  ],
   "bin": {
     "seldonclaw": "./dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/angelgalvisc/seldonclaw.git"
+  },
+  "homepage": "https://github.com/angelgalvisc/seldonclaw#readme",
+  "bugs": {
+    "url": "https://github.com/angelgalvisc/seldonclaw/issues"
+  },
+  "keywords": [
+    "simulation",
+    "social-simulation",
+    "sqlite",
+    "ckp",
+    "cli",
+    "llm"
+  ],
+  "engines": {
+    "node": ">=18"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
