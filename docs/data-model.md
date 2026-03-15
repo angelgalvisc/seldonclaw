@@ -1,6 +1,6 @@
 # SeldonClaw Data Model
 
-This document is the human-readable map of the relational model implemented in [db.ts](/Users/agc/Documents/seldonclaw/src/db.ts). It is meant for:
+This document is the human-readable map of the relational model implemented in [schema.ts](/Users/agc/Documents/seldonclaw/src/schema.ts) and accessed through [store.ts](/Users/agc/Documents/seldonclaw/src/store.ts). It is meant for:
 
 - engineers implementing pipeline and runtime code
 - operator tooling and CLI/shell work
@@ -17,11 +17,11 @@ SeldonClaw's relational model is organized in five layers:
 2. **Knowledge Graph**
    Entity/edge ontology, instances, aliases, merges, and provenance links.
 3. **Social Simulation**
-   Actors, communities, follows, posts, exposures, narratives.
+   Actors, communities, follows, posts, exposures, narratives, memories, and embedding caches.
 4. **Observability**
-   Telemetry and round summaries.
+   Telemetry, round summaries, and per-actor search audit logs.
 5. **Reproducibility**
-   Run manifests, decision cache, snapshots.
+   Run manifests, decision cache, snapshots, and reusable web search cache.
 
 ## Layered ERD
 
@@ -121,10 +121,8 @@ erDiagram
   RUN_MANIFEST ||--o{ FOLLOWS : scopes
   RUN_MANIFEST ||--o{ EXPOSURES : scopes
   RUN_MANIFEST ||--o{ NARRATIVES : scopes
-  RUN_MANIFEST ||--o{ ROUNDS : scopes
-  RUN_MANIFEST ||--o{ TELEMETRY : scopes
-  RUN_MANIFEST ||--o{ DECISION_CACHE : scopes
-  RUN_MANIFEST ||--o{ SNAPSHOTS : scopes
+  RUN_MANIFEST ||--o{ ACTOR_MEMORIES : scopes
+  RUN_MANIFEST ||--o{ SEARCH_REQUESTS : scopes
 
   ENTITIES ||--o{ ACTORS : optional_origin
   ACTORS ||--o{ ACTOR_TOPICS : has
@@ -133,8 +131,13 @@ erDiagram
   ACTORS ||--o{ FOLLOWS : follower_id
   ACTORS ||--o{ FOLLOWS : following_id
   ACTORS ||--o{ EXPOSURES : sees
+  ACTORS ||--o{ ACTOR_MEMORIES : remembers
+  ACTORS ||--o{ ACTOR_INTEREST_EMBEDDINGS : semantic_profile
+  ACTORS ||--o{ SEARCH_REQUESTS : searches
   POSTS ||--o{ POST_TOPICS : tagged_with
   POSTS ||--o{ EXPOSURES : exposed_as
+  POSTS ||--o{ POST_EMBEDDINGS : semantic_representation
+  POSTS ||--o{ ACTOR_MEMORIES : source_post
 
   COMMUNITIES ||--o{ ACTORS : membership
   COMMUNITIES ||--o{ COMMUNITY_OVERLAP : community_a
@@ -209,6 +212,39 @@ erDiagram
     text topic
     real current_intensity
   }
+  ACTOR_MEMORIES {
+    text id PK
+    text run_id FK
+    text actor_id FK
+    int round_num
+    text kind
+    real salience
+  }
+  POST_EMBEDDINGS {
+    text post_id FK
+    text model_id PK
+    text content_hash
+  }
+  ACTOR_INTEREST_EMBEDDINGS {
+    text actor_id FK
+    text model_id PK
+    text profile_hash
+  }
+  SEARCH_REQUESTS {
+    text id PK
+    text run_id FK
+    int round_num
+    text actor_id FK
+    text query
+    int cache_hit
+  }
+  SEARCH_CACHE {
+    text id PK
+    text query
+    text cutoff_date
+    text language
+    text categories
+  }
 ```
 
 ### 3. Observability + Reproducibility
@@ -219,8 +255,10 @@ erDiagram
   RUN_MANIFEST ||--o{ TELEMETRY : logs
   RUN_MANIFEST ||--o{ DECISION_CACHE : caches
   RUN_MANIFEST ||--o{ SNAPSHOTS : checkpoints
+  RUN_MANIFEST ||--o{ SEARCH_REQUESTS : search_audit
   ACTORS ||--o{ TELEMETRY : actor_events
   ACTORS ||--o{ DECISION_CACHE : decisions
+  ACTORS ||--o{ SEARCH_REQUESTS : search_actor
 
   ROUNDS {
     int num PK
@@ -254,6 +292,21 @@ erDiagram
     int round_num
     text rng_state
   }
+  SEARCH_REQUESTS {
+    text id PK
+    text run_id FK
+    int round_num
+    text actor_id FK
+    text query
+    text cutoff_date
+    int result_count
+  }
+  SEARCH_CACHE {
+    text id PK
+    text query
+    text cutoff_date
+    text fetched_at
+  }
 ```
 
 ## Full ERD
@@ -281,10 +334,12 @@ erDiagram
   RUN_MANIFEST ||--o{ FOLLOWS : scopes
   RUN_MANIFEST ||--o{ EXPOSURES : scopes
   RUN_MANIFEST ||--o{ NARRATIVES : scopes
+  RUN_MANIFEST ||--o{ ACTOR_MEMORIES : scopes
   RUN_MANIFEST ||--o{ TELEMETRY : scopes
   RUN_MANIFEST ||--o{ ROUNDS : scopes
   RUN_MANIFEST ||--o{ DECISION_CACHE : scopes
   RUN_MANIFEST ||--o{ SNAPSHOTS : scopes
+  RUN_MANIFEST ||--o{ SEARCH_REQUESTS : scopes
 
   ENTITIES ||--o{ ACTORS : optional_origin
   ACTORS ||--o{ ACTOR_TOPICS : has
@@ -293,11 +348,16 @@ erDiagram
   ACTORS ||--o{ FOLLOWS : follower_id
   ACTORS ||--o{ FOLLOWS : following_id
   ACTORS ||--o{ EXPOSURES : sees
+  ACTORS ||--o{ ACTOR_MEMORIES : remembers
+  ACTORS ||--o{ ACTOR_INTEREST_EMBEDDINGS : semantic_profile
   ACTORS ||--o{ TELEMETRY : acts
   ACTORS ||--o{ DECISION_CACHE : decides
+  ACTORS ||--o{ SEARCH_REQUESTS : searches
 
   POSTS ||--o{ POST_TOPICS : tagged_with
   POSTS ||--o{ EXPOSURES : reaches
+  POSTS ||--o{ POST_EMBEDDINGS : semantic_representation
+  POSTS ||--o{ ACTOR_MEMORIES : source_post
 
   COMMUNITIES ||--o{ ACTORS : membership
   COMMUNITIES ||--o{ COMMUNITY_OVERLAP : community_a
@@ -307,8 +367,10 @@ erDiagram
 ## Core invariants
 
 - `documents`, `chunks`, `claims`, `entities`, and `edges` are the base knowledge corpus.
-- `actors`, `posts`, `follows`, `exposures`, `narratives`, `telemetry`, `rounds`, `decision_cache`, and `snapshots` are **run-scoped**.
+- `actors`, `posts`, `follows`, `exposures`, `narratives`, `actor_memories`, `telemetry`, `rounds`, `decision_cache`, `snapshots`, and `search_requests` are **run-scoped**.
 - `communities` and `community_overlap` are also **run-scoped** in the current implementation.
+- `post_embeddings` and `actor_interest_embeddings` are per-post / per-actor caches keyed by model id.
+- `search_cache` is reusable across runs and intentionally not foreign-keyed to a specific actor or round.
 - `entities.merged_into IS NULL` means the entity is active and should appear in search/build steps.
 - `exposure_summary` is a view over `exposures`, not a source-of-truth table.
 
@@ -317,9 +379,9 @@ erDiagram
 These are not separate tables, but they are important to keep in mind when building the CLI or shell:
 
 - `PlatformState`
-  Read-only projection over `posts`, `post_topics`, `actors`, `communities`, `community_overlap`, `follows`.
+  Read-only projection over `posts`, `post_topics`, `actors`, `communities`, `community_overlap`, `follows`, `exposures`, `post_embeddings`, and `actor_interest_embeddings`.
 - `ActorContext`
-  Read model assembled from `actors`, `actor_topics`, `actor_beliefs`, `posts`, `exposures`.
+  Read model assembled from `actors`, `actor_topics`, `actor_beliefs`, `posts`, `exposures`, and `actor_memories`.
 - `NarrativeState`
   In-memory projection over `narratives`.
 - `RoundContext`

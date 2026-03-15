@@ -310,9 +310,19 @@ NullClawBackend remains defined in CognitionBackend interface for future swap if
 
 ---
 
+## Current Status
+
+SeldonClaw has moved beyond the original roadmap checkpoints in this file.
+
+- Phases 1-8 are now implemented locally
+- Current verification baseline: `389/389` tests across `27` test files
+- The remaining work is documentation upkeep, live integration validation, and future iteration
+
+The detailed phase sections below are kept as historical implementation notes, not as the current source of truth for status.
+
 ## Phase 5: Engine + CLI — MVP ✅ COMPLETE
 
-246/246 tests (15 test files). Main simulation loop and CLI entry point.
+Historical milestone. The codebase has since progressed beyond this checkpoint.
 
 ### Step 5.1: engine.ts ✅
 
@@ -335,7 +345,9 @@ NullClawBackend remains defined in CognitionBackend interface for future swap if
 
 ---
 
-## Phase 6: Advanced Social Dynamics — P1 (2.5 days)
+## Phase 6: Advanced Social Dynamics — P1 (2.5 days) ✅ COMPLETE
+
+Historical checklist retained below for traceability. Implementation is complete in the current codebase.
 
 ### Step 6.1: propagation.ts
 
@@ -395,7 +407,7 @@ NullClawBackend remains defined in CognitionBackend interface for future swap if
 
 ---
 
-## Phase 7: Analysis + Portability — P2 (3.5 days)
+## Phase 7: Analysis + Portability — P2 (3.5 days) ✅ COMPLETE
 
 ### Step 7.1: ckp.ts
 
@@ -445,7 +457,7 @@ NullClawBackend remains defined in CognitionBackend interface for future swap if
 
 ---
 
-## Phase 8: Interactive Shell — P2 (1.5 days)
+## Phase 8: Interactive Shell — P2 (1.5 days) ✅ COMPLETE
 
 ### Step 8.1: shell.ts
 

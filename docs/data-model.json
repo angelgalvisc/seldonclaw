@@ -2,7 +2,7 @@
   "name": "seldonclaw-data-model",
   "version": "0.1.0",
   "source": {
-    "schema_file": "/Users/agc/Documents/seldonclaw/src/db.ts",
+    "schema_file": "/Users/agc/Documents/seldonclaw/src/schema.ts",
     "schema_kind": "sqlite",
     "status": "manual_snapshot"
   },
@@ -38,16 +38,19 @@
         "follows",
         "exposures",
         "exposure_summary",
-        "narratives"
+        "narratives",
+        "actor_memories",
+        "post_embeddings",
+        "actor_interest_embeddings"
       ]
     },
     {
       "name": "observability",
-      "tables": ["telemetry", "rounds"]
+      "tables": ["telemetry", "rounds", "search_requests"]
     },
     {
       "name": "reproducibility",
-      "tables": ["run_manifest", "decision_cache", "snapshots"]
+      "tables": ["run_manifest", "decision_cache", "snapshots", "search_cache"]
     }
   ],
   "tables": [
@@ -458,6 +461,103 @@
       ]
     },
     {
+      "name": "actor_memories",
+      "kind": "table",
+      "scope": "run_scoped",
+      "primary_key": ["id"],
+      "columns": [
+        {"name": "id", "type": "TEXT", "nullable": false},
+        {"name": "run_id", "type": "TEXT", "nullable": false},
+        {"name": "actor_id", "type": "TEXT", "nullable": false},
+        {"name": "round_num", "type": "INTEGER", "nullable": false},
+        {"name": "kind", "type": "TEXT", "nullable": false},
+        {"name": "summary", "type": "TEXT", "nullable": false},
+        {"name": "salience", "type": "REAL", "nullable": false},
+        {"name": "topic", "type": "TEXT", "nullable": true},
+        {"name": "source_post_id", "type": "TEXT", "nullable": true},
+        {"name": "source_actor_id", "type": "TEXT", "nullable": true},
+        {"name": "created_at", "type": "TEXT", "nullable": true}
+      ],
+      "foreign_keys": [
+        {"columns": ["run_id"], "references": {"table": "run_manifest", "columns": ["id"]}},
+        {"columns": ["actor_id"], "references": {"table": "actors", "columns": ["id"]}},
+        {"columns": ["source_post_id"], "references": {"table": "posts", "columns": ["id"]}},
+        {"columns": ["source_actor_id"], "references": {"table": "actors", "columns": ["id"]}}
+      ]
+    },
+    {
+      "name": "post_embeddings",
+      "kind": "table",
+      "scope": "run_scoped_via_post",
+      "primary_key": ["post_id", "model_id"],
+      "columns": [
+        {"name": "post_id", "type": "TEXT", "nullable": false},
+        {"name": "model_id", "type": "TEXT", "nullable": false},
+        {"name": "vector", "type": "TEXT", "nullable": false},
+        {"name": "content_hash", "type": "TEXT", "nullable": false},
+        {"name": "created_at", "type": "TEXT", "nullable": true}
+      ],
+      "foreign_keys": [
+        {"columns": ["post_id"], "references": {"table": "posts", "columns": ["id"]}}
+      ]
+    },
+    {
+      "name": "actor_interest_embeddings",
+      "kind": "table",
+      "scope": "run_scoped_via_actor",
+      "primary_key": ["actor_id", "model_id"],
+      "columns": [
+        {"name": "actor_id", "type": "TEXT", "nullable": false},
+        {"name": "model_id", "type": "TEXT", "nullable": false},
+        {"name": "vector", "type": "TEXT", "nullable": false},
+        {"name": "profile_hash", "type": "TEXT", "nullable": false},
+        {"name": "created_at", "type": "TEXT", "nullable": true}
+      ],
+      "foreign_keys": [
+        {"columns": ["actor_id"], "references": {"table": "actors", "columns": ["id"]}}
+      ]
+    },
+    {
+      "name": "search_cache",
+      "kind": "table",
+      "scope": "shared_cache",
+      "primary_key": ["id"],
+      "columns": [
+        {"name": "id", "type": "TEXT", "nullable": false},
+        {"name": "query", "type": "TEXT", "nullable": false},
+        {"name": "cutoff_date", "type": "TEXT", "nullable": false},
+        {"name": "language", "type": "TEXT", "nullable": true},
+        {"name": "categories", "type": "TEXT", "nullable": true},
+        {"name": "results", "type": "TEXT", "nullable": false},
+        {"name": "fetched_at", "type": "TEXT", "nullable": false},
+        {"name": "run_id", "type": "TEXT", "nullable": true}
+      ],
+      "notes": ["Reusable web search result cache keyed by query + cutoff + language + categories."]
+    },
+    {
+      "name": "search_requests",
+      "kind": "table",
+      "scope": "run_scoped",
+      "primary_key": ["id"],
+      "columns": [
+        {"name": "id", "type": "TEXT", "nullable": false},
+        {"name": "run_id", "type": "TEXT", "nullable": false},
+        {"name": "round_num", "type": "INTEGER", "nullable": false},
+        {"name": "actor_id", "type": "TEXT", "nullable": false},
+        {"name": "query", "type": "TEXT", "nullable": false},
+        {"name": "cutoff_date", "type": "TEXT", "nullable": false},
+        {"name": "language", "type": "TEXT", "nullable": true},
+        {"name": "categories", "type": "TEXT", "nullable": true},
+        {"name": "cache_hit", "type": "INTEGER", "nullable": false},
+        {"name": "result_count", "type": "INTEGER", "nullable": false},
+        {"name": "created_at", "type": "TEXT", "nullable": true}
+      ],
+      "foreign_keys": [
+        {"columns": ["run_id"], "references": {"table": "run_manifest", "columns": ["id"]}},
+        {"columns": ["actor_id"], "references": {"table": "actors", "columns": ["id"]}}
+      ]
+    },
+    {
       "name": "telemetry",
       "kind": "table",
       "scope": "run_scoped",
@@ -568,10 +668,12 @@
     {"from": "run_manifest", "to": "follows", "cardinality": "1:N", "type": "run_scope", "via": ["follows.run_id"]},
     {"from": "run_manifest", "to": "exposures", "cardinality": "1:N", "type": "run_scope", "via": ["exposures.run_id"]},
     {"from": "run_manifest", "to": "narratives", "cardinality": "1:N", "type": "run_scope", "via": ["narratives.run_id"]},
+    {"from": "run_manifest", "to": "actor_memories", "cardinality": "1:N", "type": "run_scope", "via": ["actor_memories.run_id"]},
     {"from": "run_manifest", "to": "telemetry", "cardinality": "1:N", "type": "run_scope", "via": ["telemetry.run_id"]},
     {"from": "run_manifest", "to": "rounds", "cardinality": "1:N", "type": "run_scope", "via": ["rounds.run_id"]},
     {"from": "run_manifest", "to": "decision_cache", "cardinality": "1:N", "type": "run_scope", "via": ["decision_cache.run_id"]},
     {"from": "run_manifest", "to": "snapshots", "cardinality": "1:N", "type": "run_scope", "via": ["snapshots.run_id"]},
+    {"from": "run_manifest", "to": "search_requests", "cardinality": "1:N", "type": "run_scope", "via": ["search_requests.run_id"]},
     {"from": "entities", "to": "actors", "cardinality": "1:N", "type": "entity_to_actor", "via": ["actors.entity_id"]},
     {"from": "actors", "to": "actor_topics", "cardinality": "1:N", "type": "profile_topics", "via": ["actor_topics.actor_id"]},
     {"from": "actors", "to": "actor_beliefs", "cardinality": "1:N", "type": "belief_state", "via": ["actor_beliefs.actor_id"]},
@@ -583,7 +685,12 @@
     {"from": "actors", "to": "follows", "cardinality": "1:N", "type": "follower", "via": ["follows.follower_id"]},
     {"from": "actors", "to": "follows", "cardinality": "1:N", "type": "following", "via": ["follows.following_id"]},
     {"from": "actors", "to": "exposures", "cardinality": "1:N", "type": "viewer", "via": ["exposures.actor_id"]},
+    {"from": "actors", "to": "actor_memories", "cardinality": "1:N", "type": "memory_owner", "via": ["actor_memories.actor_id"]},
+    {"from": "actors", "to": "actor_interest_embeddings", "cardinality": "1:N", "type": "semantic_profile", "via": ["actor_interest_embeddings.actor_id"]},
+    {"from": "actors", "to": "search_requests", "cardinality": "1:N", "type": "actor_searches", "via": ["search_requests.actor_id"]},
     {"from": "posts", "to": "exposures", "cardinality": "1:N", "type": "exposed_post", "via": ["exposures.post_id"]},
+    {"from": "posts", "to": "actor_memories", "cardinality": "1:N", "type": "memory_source_post", "via": ["actor_memories.source_post_id"]},
+    {"from": "posts", "to": "post_embeddings", "cardinality": "1:N", "type": "semantic_embedding", "via": ["post_embeddings.post_id"]},
     {"from": "actors", "to": "telemetry", "cardinality": "1:N", "type": "actor_events", "via": ["telemetry.actor_id"]},
     {"from": "actors", "to": "decision_cache", "cardinality": "1:N", "type": "actor_decisions", "via": ["decision_cache.actor_id"]}
   ],
@@ -591,13 +698,13 @@
     {
       "name": "PlatformState",
       "kind": "read_model",
-      "backed_by": ["posts", "post_topics", "actors", "communities", "community_overlap", "follows"],
-      "notes": ["Used by feed.ts, propagation.ts, events.ts, engine.ts."]
+      "backed_by": ["posts", "post_topics", "actors", "communities", "community_overlap", "follows", "exposures", "post_embeddings", "actor_interest_embeddings"],
+      "notes": ["Used by feed.ts, propagation.ts, events.ts, embeddings.ts, engine.ts."]
     },
     {
       "name": "ActorContext",
       "kind": "read_model",
-      "backed_by": ["actors", "actor_topics", "actor_beliefs", "posts", "exposures"],
+      "backed_by": ["actors", "actor_topics", "actor_beliefs", "posts", "exposures", "actor_memories"],
       "notes": ["Used by cognition.ts to build DecisionRequest context."]
     },
     {

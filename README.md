@@ -15,7 +15,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5+-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Tests](https://img.shields.io/badge/Tests-387_passing-brightgreen?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/Tests-389_passing-brightgreen?style=flat-square)]()
 [![CKP](https://img.shields.io/badge/CKP-v0.2.6-orange?style=flat-square)](https://github.com/angelgalvisc/clawkernel)
 
 ---
@@ -218,32 +218,34 @@ Documents ──→ Ingest ──→ Knowledge Graph ──→ Ontology ──�
 | Module | Purpose | Lines |
 |--------|---------|-------|
 | `db.ts` | Barrel re-export for storage modules | ~20 |
-| `schema.ts` | SQLite DDL for provenance, graph, simulation, memory, search cache, and embeddings | ~450 |
-| `store.ts` | `GraphStore` interface + `SQLiteGraphStore` implementation | ~1660 |
+| `schema.ts` | SQLite DDL for provenance, graph, simulation, memory, search cache, and embeddings | ~475 |
+| `store.ts` | `GraphStore` interface + `SQLiteGraphStore` implementation | ~1740 |
 | `engine.ts` | Round loop: events → activate → feed → search → cognition → propagate → fatigue | ~520 |
 | `scheduler.ts` | V2 round scheduler: deterministic staging + bounded-concurrency backend calls | ~240 |
 | `cognition.ts` | 3-tier router + `CognitionBackend` + sim context assembly | ~580 |
 | `activation.ts` | Hourly activity curves, influence weighting, fatigue gating | ~150 |
 | `feed.ts` | Hybrid feed ranking: graph heuristics + optional semantic similarity | ~240 |
-| `fatigue.ts` | Narrative decay: exponential cooldown, extinction threshold | ~120 |
+| `fatigue.ts` | Narrative decay: exponential cooldown, extinction threshold | ~105 |
 | `propagation.ts` | Exposure spreading: followers, community overlap, viral reach | ~150 |
 | `events.ts` | Scheduled + threshold-triggered exogenous events | ~200 |
 | `memory.ts` | Deliberative actor memory derivation and persistence | ~160 |
 | `embeddings.ts` | Deterministic embedding provider, cache, and state enrichment | ~220 |
-| `search.ts` | SearXNG client, temporal cutoff filtering, cache-first web context | ~400 |
-| `design.ts` | Natural-language brief -> typed simulation spec -> rendered config | ~350 |
-| `profiles.ts` | LLM-powered actor generation from knowledge graph entities | ~250 |
-| `ontology.ts` | LLM-powered ontology extraction (entity types, edge types, topics) | ~200 |
-| `ingest.ts` | Document ingestion → chunks → claims (provenance chain) | ~200 |
-| `graph.ts` | Entity resolution, merge candidates, confidence scoring | ~250 |
+| `search.ts` | SearXNG client, temporal cutoff filtering, cache-first web context | ~500 |
+| `design.ts` | Natural-language brief -> typed simulation spec -> rendered config | ~530 |
+| `profiles.ts` | LLM-powered actor generation from knowledge graph entities | ~610 |
+| `ontology.ts` | LLM-powered ontology extraction (entity types, edge types, topics) | ~370 |
+| `ingest.ts` | Document ingestion → chunks → claims (provenance chain) | ~435 |
+| `graph.ts` | Entity resolution, merge candidates, confidence scoring | ~540 |
 | `llm.ts` | Multi-role Anthropic client + `MockLLMClient` for tests | ~330 |
 | `report.ts` | SQL → metrics + optional LLM narrative | ~200 |
-| `interview.ts` | Actor interview flow (single-turn and multi-turn) | ~150 |
-| `ckp.ts` | CKP export/import with secret scrubbing | ~200 |
-| `shell.ts` | Conversational REPL: NL→SQL, interviews, schema inspection | ~250 |
-| `config.ts` | YAML config parsing, validation, secret sanitization | ~300 |
-| `telemetry.ts` | Round-level metrics persistence (tier calls, timing) | ~100 |
-| `reproducibility.ts` | xoshiro128** PRNG, deterministic UUID generation | ~100 |
+| `interview.ts` | Actor interview flow (single-turn and multi-turn) | ~200 |
+| `ckp.ts` | CKP export/import with secret scrubbing | ~305 |
+| `shell.ts` | Conversational REPL: NL→SQL, interviews, schema inspection | ~280 |
+| `config.ts` | YAML config parsing, validation, secret sanitization | ~690 |
+| `telemetry.ts` | Round-level metrics persistence (tier calls, timing) | ~155 |
+| `types.ts` | Domain types: rows, snapshots, DTOs (pure declarations) | ~430 |
+| `ids.ts` | UUID generation + deterministic SHA-256 stable IDs | ~30 |
+| `reproducibility.ts` | xoshiro128** PRNG, deterministic UUID generation | ~280 |
 
 ## Quick Start
 
@@ -487,7 +489,7 @@ npx tsc --noEmit
 
 ### Test Suite
 
-387 tests across 26 test files covering:
+389 tests across 27 test files covering:
 
 - Knowledge graph pipeline (ingest → claims → entities → resolution)
 - Ontology extraction and entity typing
@@ -504,6 +506,21 @@ npx tsc --noEmit
 - Actor interviews (single and multi-turn)
 - Interactive shell (intent classification, schema extraction, query execution)
 - CLI command wiring and end-to-end flows
+
+### Integration Coverage
+
+The automated suite is intentionally mixed:
+
+- **Real in CI/local tests** — SQLite, filesystem I/O, schema bootstrap, ingestion fixtures, report queries, scheduler behavior, CLI wiring, and a subprocess smoke test against `dist/index.js`
+- **HTTP integration under test control** — `doctor` checks search health against a local test server, not a public internet dependency
+- **Mocked by design** — Anthropic-backed extraction, actor decisions, report narrative generation, shell NL→SQL prompting, and natural-language simulation design use explicit mock clients in automated tests
+
+This keeps the suite deterministic and fast while still validating real storage and CLI behavior. It also means two paths remain **manual integration checks**, not CI claims:
+
+1. live LLM-provider execution with your configured API key
+2. live SearXNG-backed search against your own running endpoint
+
+Use `seldonclaw doctor`, then run a non-`--mock` scenario locally when you want to validate those external integrations end-to-end.
 
 ## Project Structure
 
@@ -540,7 +557,7 @@ seldonclaw/
 │   ├── reproducibility.ts # Seedable PRNG
 │   ├── types.ts          # Domain types
 │   └── ids.ts            # ID generation
-├── tests/                # 26 test files, 387 tests
+├── tests/                # 27 test files, 389 tests
 ├── package.json
 ├── tsconfig.json
 ├── .env.example

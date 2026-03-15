@@ -112,13 +112,13 @@ seldonclaw/
 │   ├── cognition.ts          # CognitionRouter + DecisionPolicy + CognitionBackend interface
 │   ├── telemetry.ts          # Structured event logging to SQLite + sanitizeDetail()
 │   ├── reproducibility.ts    # seed, decision_cache, RecordedBackend, snapshots, run_manifest
-│   ├── propagation.ts        # Phase 6 — NOT YET IMPLEMENTED
-│   ├── fatigue.ts            # Phase 6 — NOT YET IMPLEMENTED
-│   ├── events.ts             # Phase 6 — NOT YET IMPLEMENTED
-│   ├── ckp.ts                # Phase 7 — NOT YET IMPLEMENTED
-│   ├── report.ts             # Phase 7 — NOT YET IMPLEMENTED
-│   ├── interview.ts          # Phase 7 — NOT YET IMPLEMENTED
-│   └── shell.ts              # Phase 8 — NOT YET IMPLEMENTED
+│   ├── propagation.ts        # Cross-community exposure spread + viral reach
+│   ├── fatigue.ts            # Narrative decay + actor fatigue penalty
+│   ├── events.ts             # Initial posts, scheduled events, threshold triggers
+│   ├── ckp.ts                # CKP export/import with secret scrubbing
+│   ├── report.ts             # SQL metrics + optional LLM narrative
+│   ├── interview.ts          # Actor interview flow
+│   └── shell.ts              # Interactive REPL + NL→SQL + interviews
 ├── templates/                   # Phase 7 — placeholder (empty)
 ├── package.json
 ├── tsconfig.json
@@ -1753,15 +1753,15 @@ NullClaw integration deferred — actors only need structured LLM completions, n
 | `telemetry.ts` | P0 | ✅ Phase 4 |
 | `engine.ts` | P0 | ✅ Phase 5 |
 | `index.ts` (CLI) | P0 | ✅ Phase 5 |
-| `propagation.ts` | P1 | Phase 6 |
-| `fatigue.ts` | P1 | Phase 6 |
-| `events.ts` | P1 | Phase 6 |
-| `ckp.ts` | P2 | Phase 7 |
-| `report.ts` | P2 | Phase 7 |
-| `interview.ts` | P2 | Phase 7 |
-| `shell.ts` | P2 | Phase 8 |
+| `propagation.ts` | P1 | ✅ Phase 6 |
+| `fatigue.ts` | P1 | ✅ Phase 6 |
+| `events.ts` | P1 | ✅ Phase 6 |
+| `ckp.ts` | P2 | ✅ Phase 7 |
+| `report.ts` | P2 | ✅ Phase 7 |
+| `interview.ts` | P2 | ✅ Phase 7 |
+| `shell.ts` | P2 | ✅ Phase 8 |
 
-**Phases 1-5 complete** (246/246 tests). Next: Phase 6 (propagation, fatigue, events).
+**Phases 1-8 complete locally** (`389/389` tests, 27 test files). The remaining work is no longer missing core modules; it is validation, documentation upkeep, and future iteration.
 
 ## Report Pipeline (report.ts)
 
