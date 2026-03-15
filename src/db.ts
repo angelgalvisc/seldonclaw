@@ -803,6 +803,10 @@ export interface GraphStore {
     detail?: string
   ): string;
 
+  // Bulk queries (engine.ts)
+  getActorTopicsByRun(runId: string): Map<string, string[]>;
+  getActorBeliefsByRun(runId: string): Map<string, Record<string, number>>;
+
   // Queries
   queryActorContext(actorId: string, runId: string): ActorContext;
   queryNarrativeState(topic: string, runId: string): NarrativeState | null;
@@ -1185,6 +1189,44 @@ export class SQLiteGraphStore implements GraphStore {
     }
 
     return id;
+  }
+
+  // ─── Bulk queries (engine.ts) ───
+
+  getActorTopicsByRun(runId: string): Map<string, string[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT at.actor_id, at.topic FROM actor_topics at
+         JOIN actors a ON a.id = at.actor_id
+         WHERE a.run_id = ?`
+      )
+      .all(runId) as Array<{ actor_id: string; topic: string }>;
+
+    const result = new Map<string, string[]>();
+    for (const row of rows) {
+      const topics = result.get(row.actor_id) ?? [];
+      topics.push(row.topic);
+      result.set(row.actor_id, topics);
+    }
+    return result;
+  }
+
+  getActorBeliefsByRun(runId: string): Map<string, Record<string, number>> {
+    const rows = this.db
+      .prepare(
+        `SELECT ab.actor_id, ab.topic, ab.sentiment FROM actor_beliefs ab
+         JOIN actors a ON a.id = ab.actor_id
+         WHERE a.run_id = ?`
+      )
+      .all(runId) as Array<{ actor_id: string; topic: string; sentiment: number }>;
+
+    const result = new Map<string, Record<string, number>>();
+    for (const row of rows) {
+      const beliefs = result.get(row.actor_id) ?? {};
+      beliefs[row.topic] = row.sentiment;
+      result.set(row.actor_id, beliefs);
+    }
+    return result;
   }
 
   // ─── Queries ───
