@@ -278,20 +278,8 @@ export function canActorSearch(
     return false;
   }
 
-  const allowActors = config.allowActors.map(normalizeToken).filter(Boolean);
-  if (
-    allowActors.length > 0 &&
-    !actorTokens.some((token) => allowActors.includes(token))
-  ) {
-    return false;
-  }
-
   const archetype = normalizeToken(actor.archetype);
   if (config.denyArchetypes.map(normalizeToken).includes(archetype)) {
-    return false;
-  }
-  const allowedArchetypes = config.allowArchetypes.map(normalizeToken).filter(Boolean);
-  if (allowedArchetypes.length > 0 && !allowedArchetypes.includes(archetype)) {
     return false;
   }
 
@@ -299,12 +287,25 @@ export function canActorSearch(
   if (config.denyProfessions.map(normalizeToken).includes(profession)) {
     return false;
   }
+
+  const allowActors = config.allowActors.map(normalizeToken).filter(Boolean);
+  const allowedArchetypes = config.allowArchetypes.map(normalizeToken).filter(Boolean);
   const allowedProfessions = config.allowProfessions.map(normalizeToken).filter(Boolean);
-  if (allowedProfessions.length > 0 && !allowedProfessions.includes(profession)) {
-    return false;
+
+  const hasAllowPolicy =
+    allowActors.length > 0 ||
+    allowedArchetypes.length > 0 ||
+    allowedProfessions.length > 0;
+
+  if (!hasAllowPolicy) {
+    return true;
   }
 
-  return true;
+  return (
+    actorTokens.some((token) => allowActors.includes(token)) ||
+    allowedArchetypes.includes(archetype) ||
+    allowedProfessions.includes(profession)
+  );
 }
 
 export function selectSearchEnabledActors(

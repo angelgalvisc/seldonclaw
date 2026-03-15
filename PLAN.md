@@ -2048,6 +2048,7 @@ Two post-MVP extensions were added after the core engine stabilized. They were i
 - `search.enabled = false` preserves the original behavior.
 - `maxActorsPerRound` and `maxActorsByTier` cap who can search in a round.
 - `allowArchetypes` / `denyArchetypes`, `allowProfessions` / `denyProfessions`, and `allowActors` / `denyActors` control which actors may search.
+- `deny*` rules win. `allow*` rules are additive rather than intersecting.
 - `search_cache` stores reusable result sets by `(query, cutoff_date, language, categories)`.
 - `search_requests` records which actor searched what in each round.
 - `DecisionRequest.webContext` is part of the replay hash.

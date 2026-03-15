@@ -149,6 +149,8 @@ Search eligibility is policy-driven:
 - split the budget by tier
 - allow or deny search by archetype, profession, or explicit actor identity
 
+`deny*` rules take precedence. `allow*` rules are additive: an actor may search if it matches any allowed actor, archetype, or profession rule.
+
 ## Architecture
 
 ```
