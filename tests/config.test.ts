@@ -53,6 +53,8 @@ describe("config.ts", () => {
       expect(config.search.enabled).toBe(false);
       expect(config.search.endpoint).toBe("http://localhost:8888");
       expect(config.search.enabledTiers).toEqual(["A", "B"]);
+      expect(config.search.maxActorsPerRound).toBe(4);
+      expect(config.search.maxActorsByTier).toEqual({ A: 2, B: 2 });
       expect(config.search.maxResultsPerQuery).toBe(5);
 
       expect(config.propagation.viralThreshold).toBe(30);
@@ -157,6 +159,16 @@ search:
   cutoffDate: "2026-03-01"
   strictCutoff: true
   enabledTiers: ["A", "B"]
+  maxActorsPerRound: 4
+  maxActorsByTier:
+    A: 2
+    B: 2
+  allowArchetypes: ["media"]
+  denyArchetypes: []
+  allowProfessions: ["journalist"]
+  denyProfessions: []
+  allowActors: []
+  denyActors: []
   maxResultsPerQuery: 5
   maxQueriesPerActor: 2
   categories: "news"
@@ -191,6 +203,7 @@ output:
       expect(config.cognition.tierA.archetypeOverrides).toContain("media");
       expect(config.nullclaw.gatewayUrl).toBe("http://localhost:3000");
       expect(config.search.cutoffDate).toBe("2026-03-01");
+      expect(config.search.allowArchetypes).toEqual(["media"]);
     });
   });
 
@@ -288,6 +301,15 @@ search:
         parseConfig(`
 search:
   cutoffDate: "not-a-date"
+`);
+      }).toThrow(ConfigError);
+    });
+
+    it("rejects negative search budgets", () => {
+      expect(() => {
+        parseConfig(`
+search:
+  maxActorsPerRound: -1
 `);
       }).toThrow(ConfigError);
     });
