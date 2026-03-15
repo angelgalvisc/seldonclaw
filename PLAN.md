@@ -1587,6 +1587,10 @@ seldonclaw resume --db simulation.db --run <run-id>               # resume from 
 seldonclaw replay --db simulation.db --run <run-id> --to-round 30 # replay up to round 30
 
 # Utilities
+seldonclaw init                                              # conversational setup wizard
+seldonclaw doctor                                            # validate install, config, provider, DB access
+seldonclaw config show                                       # print sanitized current config
+seldonclaw config set output.dir ./output                    # update a config field
 seldonclaw inspect --db simulation.db --actor "journalist-01"     # view actor state
 seldonclaw interview --db simulation.db --actor "journalist-01"   # interview via NullClaw
 seldonclaw export --db simulation.db --actor "journalist-01"      # export concrete claw.yaml
@@ -1788,6 +1792,55 @@ Conversational REPL over a completed (or running) simulation. Not a general chat
 ```bash
 seldonclaw shell --db simulation.db --run <run-id>
 ```
+
+### Conversational Setup
+
+The CLI should also support a guided setup flow for first-time users:
+
+```bash
+seldonclaw init
+seldonclaw doctor
+```
+
+`seldonclaw init` is a conversational setup assistant, not a static flag dump. It should:
+
+1. Detect the local environment
+   - Node runtime available
+   - writable working directory
+   - SQLite file path availability
+   - existing `seldonclaw.config.yaml` / `.env`
+2. Ask only for the minimum required inputs
+   - LLM provider/model profile
+   - API key
+   - default docs directory
+   - output directory
+   - timezone
+3. Persist configuration safely
+   - write `seldonclaw.config.yaml` without embedding secrets
+   - store API keys in environment variables, `.env`, or OS keychain
+   - never write raw API keys into `run_manifest`, telemetry, exports, or snapshots
+4. Validate the setup before exiting
+   - confirm provider credentials are present
+   - run a minimal provider health check / small completion
+   - confirm SQLite database open/create works
+5. Offer the next action
+   - e.g. "Run a sample simulation now?"
+
+`seldonclaw doctor` is a deterministic diagnostic command. It should:
+- verify required files and permissions
+- check that configured provider env vars exist
+- validate the config schema
+- attempt a DB open/create
+- optionally run a lightweight provider connectivity test
+- print actionable failures, not stack traces by default
+
+**Secret handling rules:**
+- Never echo the full API key back to the terminal after entry.
+- Never persist raw secrets in `seldonclaw.config.yaml`.
+- Never include secrets in telemetry, `config_snapshot`, exports, or shell context.
+- `config show` must display only a sanitized view.
+
+**Implementation timing:** this belongs to the CLI/shell user experience layer (Phase 7/8), not the core simulation engine. The deterministic subcommands remain canonical; setup conversation is a guided layer on top.
 
 ### Architecture
 
