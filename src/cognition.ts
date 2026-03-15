@@ -28,6 +28,10 @@ import type {
 import { stableId } from "./db.js";
 import type { CognitionConfig } from "./config.js";
 import type { LLMClient, LLMResponse } from "./llm.js";
+import {
+  PLATFORM_ACTIONS,
+  type PlatformAction,
+} from "./platform.js";
 import { hashDecisionRequest, hashString } from "./reproducibility.js";
 
 // ═══════════════════════════════════════════════════════
@@ -55,14 +59,14 @@ export interface DecisionRequest {
     belief_state: Record<string, number>;
   };
   feed: FeedItem[];
-  availableActions: string[];
-  platform: "x";
+  availableActions: PlatformAction[];
+  platform: string;
   simContext: string;
   webContext?: string;
 }
 
 export interface DecisionResponse {
-  action: "post" | "comment" | "repost" | "like" | "follow" | "search" | "idle";
+  action: PlatformAction;
   content?: string;
   target?: string;
   reasoning?: string;
@@ -174,14 +178,16 @@ export function applyTierCRules(
   actor: ActorRow,
   feed: FeedItem[],
   config: CognitionConfig,
-  rng: PRNG
+  rng: PRNG,
+  availableActions: PlatformAction[] = ["post", "comment", "repost", "like", "follow", "idle"]
 ): DecisionResponse {
+  const can = (action: PlatformAction) => availableActions.includes(action);
   // Sort feed by score descending for deterministic top pick
   const sorted = [...feed].sort((a, b) => b.score - a.score);
 
   for (const item of sorted) {
     // High-engagement post → consider repost
-    if (item.post.likes + item.post.reposts > 5) {
+    if (can("repost") && item.post.likes + item.post.reposts > 5) {
       if (rng.next() < config.tierC.repostProb) {
         return {
           action: "repost",
@@ -194,7 +200,7 @@ export function applyTierCRules(
     // Aligned sentiment → consider like
     const aligned = (actor.sentiment_bias >= 0 && item.post.sentiment >= 0) ||
                     (actor.sentiment_bias < 0 && item.post.sentiment < 0);
-    if (aligned && item.source === "follow") {
+    if (can("like") && aligned && item.source === "follow") {
       if (rng.next() < config.tierC.likeProb) {
         return {
           action: "like",
@@ -202,6 +208,22 @@ export function applyTierCRules(
           reasoning: "tier-C rule: aligned like",
         };
       }
+    }
+  }
+
+  if (can("unfollow")) {
+    const misalignedFollow = sorted.find(
+      (item) =>
+        item.source === "follow" &&
+        ((actor.sentiment_bias >= 0 && item.post.sentiment < 0) ||
+          (actor.sentiment_bias < 0 && item.post.sentiment >= 0))
+    );
+    if (misalignedFollow && rng.next() < 0.05) {
+      return {
+        action: "unfollow",
+        target: misalignedFollow.post.authorId,
+        reasoning: "tier-C rule: disengage from consistently misaligned follow",
+      };
     }
   }
 
@@ -472,7 +494,7 @@ function buildDecisionSystemPrompt(request: DecisionRequest): string {
     ? `\nWEB CONTEXT:\n${request.webContext}\n`
     : "";
 
-  return `You are simulating a social media user on X (formerly Twitter).
+  return `You are simulating a social media user on ${request.platform}.
 
 YOUR PERSONA:
 Name: ${request.actor.name}
@@ -507,9 +529,9 @@ function buildDecisionUserPrompt(request: DecisionRequest): string {
     `AVAILABLE ACTIONS: ${request.availableActions.join(", ")}\n\n` +
     `Choose your action. Respond as JSON:\n` +
     `{\n` +
-    `  "action": "post|comment|repost|like|follow|idle",\n` +
+    `  "action": "${request.availableActions.join("|")}",\n` +
     `  "content": "text of post/comment (if action=post or comment)",\n` +
-    `  "target": "post_id or user_id (if action=comment/repost/like/follow)",\n` +
+    `  "target": "post_id or user_id depending on action",\n` +
     `  "reasoning": "brief explanation of why you chose this action"\n` +
     `}`;
 }
@@ -518,7 +540,7 @@ function buildDecisionUserPrompt(request: DecisionRequest): string {
 // Validation
 // ═══════════════════════════════════════════════════════
 
-const VALID_ACTIONS = new Set(["post", "comment", "repost", "like", "follow", "search", "idle"]);
+const VALID_ACTIONS = new Set<string>(PLATFORM_ACTIONS);
 
 function validateDecisionResponse(data: unknown): DecisionResponse {
   const obj = data as Record<string, unknown>;
@@ -560,12 +582,34 @@ export function buildDecisionRequest(
   beliefs: Record<string, number>,
   topics: string[],
   simContext: string,
+  availableActionsOrRoundNum: PlatformAction[] | number = [
+    "post",
+    "comment",
+    "repost",
+    "like",
+    "follow",
+    "idle",
+  ],
+  platformOrWebContext?: string,
   roundNum: number = 0,
   webContext?: string
 ): DecisionRequest {
+  const availableActions = Array.isArray(availableActionsOrRoundNum)
+    ? availableActionsOrRoundNum
+    : (["post", "comment", "repost", "like", "follow", "idle"] as PlatformAction[]);
+  const resolvedRoundNum = Array.isArray(availableActionsOrRoundNum)
+    ? roundNum
+    : availableActionsOrRoundNum;
+  const platform = Array.isArray(availableActionsOrRoundNum)
+    ? (platformOrWebContext ?? "x")
+    : "x";
+  const resolvedWebContext = Array.isArray(availableActionsOrRoundNum)
+    ? webContext
+    : platformOrWebContext;
+
   return {
     actorId: actor.id,
-    roundNum,
+    roundNum: resolvedRoundNum,
     actor: {
       name: actor.name,
       personality: actor.personality,
@@ -577,9 +621,9 @@ export function buildDecisionRequest(
       belief_state: beliefs,
     },
     feed,
-    availableActions: ["post", "comment", "repost", "like", "follow", "idle"],
-    platform: "x",
+    availableActions,
+    platform,
     simContext,
-    webContext,
+    webContext: resolvedWebContext,
   };
 }

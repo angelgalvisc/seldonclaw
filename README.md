@@ -15,7 +15,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5+-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Tests](https://img.shields.io/badge/Tests-394_passing-brightgreen?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/Tests-404_passing-brightgreen?style=flat-square)]()
 [![CKP](https://img.shields.io/badge/CKP-v0.2.6-orange?style=flat-square)](https://github.com/angelgalvisc/clawkernel)
 
 ---
@@ -65,7 +65,10 @@ At the operator level, it gives researchers and builders a way to design simulat
 - **Narrative fatigue** — Topics decay naturally over time; agents lose interest in oversaturated narratives
 - **Event injection** — Schedule exogenous shocks (breaking news, policy changes) that alter the simulation mid-run
 - **Agent memory** — Tier A/B actors accumulate deliberative memories across rounds for coherent follow-up behavior and interviews
-- **Feed algorithm** — Recency, popularity, relevance, echo chamber effects, and optional semantic similarity shape what each agent sees
+- **Configurable platform policy** — Simulate X-style, forum-like, reddit-like, or custom behavior by configuring actions, tier capabilities, moderation, and ranking policy
+- **Expanded action surface** — Quote, unfollow, unlike, delete, mute, block, and report complement post/comment/repost/like/follow
+- **Feed algorithms** — Chronological, heuristic, trace-aware, embedding, and hybrid ranking modes with out-of-network mix control
+- **Negative social dynamics** — Mutes and blocks alter feed visibility and cross-actor propagation; report actions can trigger deterministic platform moderation
 - **Idle fast-forward** — Quiet tails with no recent posts, no events, and no activated actors can be compressed into audited skipped spans
 - **CKP portability** — Export any agent as a portable bundle with beliefs, provenance, and A2A agent card
 - **Interactive shell** — Natural language queries over simulation data, actor interviews, live SQL access
@@ -115,7 +118,9 @@ Round N begins
                     ┌─────────────────────┐
                     │  Agent decides:      │
                     │  post / reply /      │
-                    │  repost / idle       │
+                    │  repost / quote /    │
+                    │  like / report /     │
+                    │  unfollow / idle     │
                     └─────────────────────┘
 ```
 
@@ -204,6 +209,51 @@ simulation:
 
 This is Phase 9A only: a conservative fast-forward path for quiet tails. Adaptive round size and budget-aware execution remain future phases.
 
+## Platform Policy
+
+SeldonClaw no longer treats the platform as a single hardcoded X/Twitter action list. The runtime now consumes a `platform` policy that controls:
+
+- the platform name shown to cognition
+- which actions exist globally
+- which actions each tier may emit
+- which recommendation algorithm powers feed ranking
+- whether report-driven moderation can shadow content automatically
+
+```yaml
+platform:
+  name: "x"
+  features:
+    upvoteDownvote: false
+    threads: false
+    characterLimit: 280
+    anonymousPosting: false
+    communitiesUserCreated: false
+  actions:
+    - post
+    - comment
+    - repost
+    - quote
+    - like
+    - unlike
+    - follow
+    - unfollow
+    - mute
+    - block
+    - report
+    - delete
+    - search
+    - idle
+  recsys: "hybrid"
+  tierAllowedActions:
+    A: ["post", "comment", "repost", "quote", "like", "unlike", "follow", "unfollow", "mute", "block", "report", "delete", "search", "idle"]
+    B: ["post", "comment", "repost", "quote", "like", "unlike", "follow", "unfollow", "mute", "report", "delete", "search", "idle"]
+    C: ["post", "comment", "repost", "like", "follow", "unfollow", "idle"]
+  moderation:
+    enabled: true
+    reportThreshold: 3
+    shadowBanOnThreshold: true
+```
+
 ## Architecture
 
 ```
@@ -240,17 +290,19 @@ Documents ──→ Ingest ──→ Knowledge Graph ──→ Ontology ──�
 | Module | Purpose | Lines |
 |--------|---------|-------|
 | `db.ts` | Barrel re-export for storage modules | ~20 |
-| `schema.ts` | SQLite DDL for provenance, graph, simulation, memory, search cache, and embeddings | ~475 |
-| `store.ts` | `GraphStore` interface + `SQLiteGraphStore` implementation | ~1740 |
-| `engine.ts` | Round loop: events → activate → feed → search → cognition → propagate → fatigue | ~520 |
-| `scheduler.ts` | V2 round scheduler: deterministic staging + bounded-concurrency backend calls | ~240 |
-| `cognition.ts` | 3-tier router + `CognitionBackend` + sim context assembly | ~580 |
+| `schema.ts` | SQLite DDL for provenance, graph, simulation, moderation, memory, search cache, and embeddings | ~526 |
+| `store.ts` | `GraphStore` interface + `SQLiteGraphStore` implementation | ~2030 |
+| `engine.ts` | Round loop: events → activate → feed → search → cognition → execute → moderate → propagate → fatigue | ~786 |
+| `scheduler.ts` | V2 round scheduler: deterministic staging + bounded-concurrency backend calls | ~263 |
+| `cognition.ts` | 3-tier router + `CognitionBackend` + platform-aware action contracts | ~629 |
 | `activation.ts` | Hourly activity curves, influence weighting, fatigue gating | ~150 |
-| `feed.ts` | Hybrid feed ranking: graph heuristics + optional semantic similarity | ~240 |
+| `feed.ts` | Platform-aware feed ranking: chronological, heuristic, trace-aware, embedding, hybrid | ~371 |
 | `fatigue.ts` | Narrative decay: exponential cooldown, extinction threshold | ~105 |
-| `propagation.ts` | Exposure spreading: followers, community overlap, viral reach | ~150 |
+| `propagation.ts` | Exposure spreading with community overlap and block-aware visibility | ~179 |
 | `events.ts` | Scheduled + threshold-triggered exogenous events | ~200 |
-| `memory.ts` | Deliberative actor memory derivation and persistence | ~160 |
+| `memory.ts` | Deliberative actor memory derivation and persistence | ~175 |
+| `platform.ts` | Configurable platform policy, action catalog, and tier capability matrix | ~148 |
+| `moderation.ts` | Deterministic platform moderation from report thresholds | ~30 |
 | `embeddings.ts` | Deterministic embedding provider, cache, and state enrichment | ~220 |
 | `search.ts` | SearXNG client, temporal cutoff filtering, cache-first web context | ~500 |
 | `time-policy.ts` | Conservative time acceleration policy for quiet-tail compression | ~150 |
@@ -264,9 +316,9 @@ Documents ──→ Ingest ──→ Knowledge Graph ──→ Ontology ──�
 | `interview.ts` | Actor interview flow (single-turn and multi-turn) | ~200 |
 | `ckp.ts` | CKP export/import with secret scrubbing | ~305 |
 | `shell.ts` | Conversational REPL: NL→SQL, interviews, schema inspection | ~280 |
-| `config.ts` | YAML config parsing, validation, secret sanitization | ~690 |
+| `config.ts` | YAML config parsing, validation, platform policy normalization, secret sanitization | ~827 |
 | `telemetry.ts` | Round-level metrics persistence (tier calls, timing) | ~155 |
-| `types.ts` | Domain types: rows, snapshots, DTOs (pure declarations) | ~430 |
+| `types.ts` | Domain types: rows, snapshots, DTOs, platform/runtime projections | ~487 |
 | `ids.ts` | UUID generation + deterministic SHA-256 stable IDs | ~30 |
 | `reproducibility.ts` | xoshiro128** PRNG, deterministic UUID generation | ~280 |
 
@@ -512,7 +564,7 @@ npx tsc --noEmit
 
 ### Test Suite
 
-389 tests across 27 test files covering:
+404 tests across 27 test files covering:
 
 - Knowledge graph pipeline (ingest → claims → entities → resolution)
 - Ontology extraction and entity typing
@@ -563,6 +615,8 @@ seldonclaw/
 │   ├── propagation.ts    # Exposure spreading
 │   ├── events.ts         # Event scheduling + triggers
 │   ├── memory.ts         # Persisted actor memories
+│   ├── platform.ts       # Platform policy + tier action matrix
+│   ├── moderation.ts     # Deterministic moderation rules
 │   ├── embeddings.ts     # Embedding cache + semantic features
 │   ├── search.ts         # SearXNG-backed web grounding
 │   ├── design.ts         # Natural-language simulation design
@@ -580,7 +634,7 @@ seldonclaw/
 │   ├── reproducibility.ts # Seedable PRNG
 │   ├── types.ts          # Domain types
 │   └── ids.ts            # ID generation
-├── tests/                # 27 test files, 389 tests
+├── tests/                # 27 test files, 404 tests
 ├── package.json
 ├── tsconfig.json
 ├── .env.example

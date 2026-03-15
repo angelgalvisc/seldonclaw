@@ -39,6 +39,11 @@ import {
   createEmbeddingProvider,
 } from "./embeddings.js";
 import { createSearchProvider } from "./search.js";
+import { applyAutomaticModeration } from "./moderation.js";
+import {
+  getAllowedActionsForTier,
+  isActionAllowedForTier,
+} from "./platform.js";
 import {
   planIdleFastForward,
   shouldAttemptIdleFastForward,
@@ -346,7 +351,11 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
             actor: scheduled.actor,
             actorTopics: scheduled.actorTopics,
             routeTier: scheduled.route.tier,
-            decision: scheduled.decision,
+            decision: normalizeDecisionForPlatform(
+              config,
+              scheduled.route.tier,
+              scheduled.decision
+            ),
             feed: scheduled.feed,
           };
 
@@ -355,9 +364,11 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
             runId,
             roundNum,
             executable.actor,
+            executable.routeTier,
             executable.decision,
             simTimestamp,
-            executable.actorTopics
+            executable.actorTopics,
+            config
           );
 
           logAction(
@@ -386,6 +397,25 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
           activeEvents,
           updatedNarratives
         );
+
+        const moderationDecisions = applyAutomaticModeration(
+          store,
+          runId,
+          roundNum,
+          config.platform.moderation
+        );
+        for (const moderation of moderationDecisions) {
+          if (moderation.status === "none") continue;
+          logAction(
+            store,
+            runId,
+            roundNum,
+            undefined,
+            undefined,
+            "moderation",
+            JSON.stringify(moderation)
+          );
+        }
 
         // ── Phase 6: Propagation (AFTER execute) ──
         // Intentional one-round latency: propagation uses `state` built at the
@@ -477,9 +507,11 @@ function executeDecision(
   runId: string,
   roundNum: number,
   actor: ActorRow,
+  routeTier: "A" | "B" | "C",
   decision: DecisionResponse,
   simTimestamp: string,
-  actorTopics: string[]
+  actorTopics: string[],
+  config: SimConfig
 ): number {
   switch (decision.action) {
     case "post": {
@@ -489,6 +521,7 @@ function executeDecision(
         run_id: runId,
         author_id: actor.id,
         content: decision.content ?? `[${actor.handle}] generic post`,
+        post_kind: "post",
         round_num: roundNum,
         sim_timestamp: simTimestamp,
         likes: 0,
@@ -512,6 +545,7 @@ function executeDecision(
         author_id: actor.id,
         content: decision.content ?? `[${actor.handle}] comment`,
         reply_to: decision.target ?? undefined,
+        post_kind: "comment",
         round_num: roundNum,
         sim_timestamp: simTimestamp,
         likes: 0,
@@ -533,8 +567,9 @@ function executeDecision(
         id: repostId,
         run_id: runId,
         author_id: actor.id,
-        content: decision.content ?? `RT @${decision.target ?? "unknown"}`,
+        content: decision.content ?? `Reposted ${decision.target ?? "post"}`,
         quote_of: decision.target ?? undefined,
+        post_kind: "repost",
         round_num: roundNum,
         sim_timestamp: simTimestamp,
         likes: 0,
@@ -544,6 +579,30 @@ function executeDecision(
         sentiment: actor.sentiment_bias,
       };
       store.addPost(repost);
+      if (decision.target) {
+        store.updatePostEngagement(decision.target, "reposts", 1);
+      }
+      return 1;
+    }
+
+    case "quote": {
+      const quoteId = stableId("quote", runId, actor.id, String(roundNum));
+      const quote: Post = {
+        id: quoteId,
+        run_id: runId,
+        author_id: actor.id,
+        content: decision.content ?? `[${actor.handle}] quoted a post`,
+        quote_of: decision.target ?? undefined,
+        post_kind: "quote",
+        round_num: roundNum,
+        sim_timestamp: simTimestamp,
+        likes: 0,
+        reposts: 0,
+        comments: 0,
+        reach: 0,
+        sentiment: actor.sentiment_bias,
+      };
+      store.addPost(quote);
       if (decision.target) {
         store.updatePostEngagement(decision.target, "reposts", 1);
       }
@@ -564,6 +623,13 @@ function executeDecision(
       return 0;
     }
 
+    case "unlike": {
+      if (decision.target) {
+        store.removeLike(actor.id, decision.target, runId);
+      }
+      return 0;
+    }
+
     case "follow": {
       if (decision.target) {
         store.addFollow({
@@ -576,11 +642,82 @@ function executeDecision(
       return 0;
     }
 
+    case "unfollow": {
+      if (decision.target) {
+        store.removeFollow(actor.id, decision.target, runId);
+      }
+      return 0;
+    }
+
+    case "mute": {
+      if (decision.target) {
+        store.addMute({
+          actor_id: actor.id,
+          muted_actor_id: decision.target,
+          run_id: runId,
+          since_round: roundNum,
+        });
+      }
+      return 0;
+    }
+
+    case "block": {
+      if (decision.target) {
+        store.addBlock({
+          actor_id: actor.id,
+          blocked_actor_id: decision.target,
+          run_id: runId,
+          since_round: roundNum,
+        });
+      }
+      return 0;
+    }
+
+    case "report": {
+      if (decision.target) {
+        store.addReport({
+          id: stableId("report", runId, actor.id, decision.target, String(roundNum)),
+          run_id: runId,
+          round_num: roundNum,
+          reporter_id: actor.id,
+          post_id: decision.target,
+          reason: decision.reasoning ?? null,
+        });
+      }
+      return 0;
+    }
+
+    case "delete": {
+      const targetPostId = decision.target ?? stableId("post", runId, actor.id, String(roundNum));
+      store.markPostDeleted(targetPostId, actor.id, runId);
+      return 0;
+    }
+
     case "idle":
     case "search":
     default:
       return 0;
   }
+}
+
+function normalizeDecisionForPlatform(
+  config: SimConfig,
+  routeTier: "A" | "B" | "C",
+  decision: DecisionResponse
+): DecisionResponse {
+  if (isActionAllowedForTier(config.platform, routeTier, decision.action)) {
+    return decision;
+  }
+  if (decision.action === "search") {
+    return { action: "idle", reasoning: decision.reasoning ?? "search handled outside the action loop" };
+  }
+  const fallbackActions = getAllowedActionsForTier(config.platform, routeTier);
+  return {
+    action: fallbackActions.includes("idle") ? "idle" : fallbackActions[0] ?? "idle",
+    reasoning:
+      decision.reasoning ??
+      `Action "${decision.action}" is not allowed for tier ${routeTier} on ${config.platform.name}.`,
+  };
 }
 
 // ═══════════════════════════════════════════════════════

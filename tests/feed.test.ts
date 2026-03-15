@@ -31,10 +31,14 @@ import { buildFeed } from "../src/feed.js";
 
 const defaultFeedConfig: FeedConfig = {
   size: 20,
+  algorithm: "hybrid",
   recencyWeight: 0.4,
   popularityWeight: 0.3,
   relevanceWeight: 0.3,
   echoChamberStrength: 0.5,
+  traceWeight: 0.25,
+  outOfNetworkRatio: 0.35,
+  diversityWeight: 0.2,
   embeddingEnabled: false,
   embeddingWeight: 0.25,
   embeddingModel: "hash-embedding-v1",
@@ -97,6 +101,9 @@ function makePlatformState(
     actors: new Map(),
     communities: [],
     exposedActors: new Map(),
+    muteGraph: new Map(),
+    blockGraph: new Map(),
+    interactionTrace: new Map(),
     ...overrides,
   };
 }
@@ -408,5 +415,62 @@ describe("buildFeed — edge cases", () => {
     );
     expect(feed).toHaveLength(1);
     expect(feed[0].source).toBe("trending");
+  });
+
+  it("filters muted authors from the feed", () => {
+    const state = makePlatformState({
+      recentPosts: [makePost({ id: "muted-post", authorId: "muted-author" })],
+      actors: new Map([["muted-author", { id: "muted-author", communityId: "", influenceWeight: 0.5, stance: "neutral", sentimentBias: 0 }]]),
+      muteGraph: new Map([["actor-1", new Set(["muted-author"])]]),
+    });
+
+    const feed = buildFeed(makeActor(), state, defaultFeedConfig);
+    expect(feed).toHaveLength(0);
+  });
+
+  it("filters authors who block the viewer", () => {
+    const state = makePlatformState({
+      recentPosts: [makePost({ id: "blocked-post", authorId: "hostile-author" })],
+      actors: new Map([["hostile-author", { id: "hostile-author", communityId: "", influenceWeight: 0.5, stance: "neutral", sentimentBias: 0 }]]),
+      blockGraph: new Map([["hostile-author", new Set(["actor-1"])]]),
+    });
+
+    const feed = buildFeed(makeActor(), state, defaultFeedConfig);
+    expect(feed).toHaveLength(0);
+  });
+
+  it("trace-aware ranking boosts authors with prior engagement", () => {
+    const familiar = makePost({ id: "familiar", authorId: "author-a", roundNum: 5 });
+    const stranger = makePost({ id: "stranger", authorId: "author-b", roundNum: 5 });
+    const state = makePlatformState({
+      recentPosts: [stranger, familiar],
+      actors: new Map([
+        ["author-a", { id: "author-a", communityId: "", influenceWeight: 0.5, stance: "neutral", sentimentBias: 0 }],
+        ["author-b", { id: "author-b", communityId: "", influenceWeight: 0.5, stance: "neutral", sentimentBias: 0 }],
+      ]),
+      interactionTrace: new Map([
+        [
+          "actor-1",
+          {
+            engagedPostIds: new Set(["older-post"]),
+            authorScores: new Map([["author-a", 5]]),
+            topicScores: new Map([["education", 3]]),
+            inNetworkScore: 2,
+            outOfNetworkScore: 1,
+          },
+        ],
+      ]),
+    });
+
+    const feed = buildFeed(makeActor(), state, {
+      ...defaultFeedConfig,
+      algorithm: "trace-aware",
+      recencyWeight: 0,
+      popularityWeight: 0,
+      relevanceWeight: 0,
+      traceWeight: 1,
+    });
+
+    expect(feed[0].post.id).toBe("familiar");
   });
 });

@@ -122,10 +122,24 @@ function summarizeReflection(action: ScheduledActorAction): string {
       return `You decided to comment on another actor's post this round.`;
     case "repost":
       return `You decided to amplify a post that felt important to your audience.`;
+    case "quote":
+      return `You amplified a post while adding your own framing to it.`;
     case "like":
       return `You endorsed a post that aligned with your current beliefs.`;
+    case "unlike":
+      return `You withdrew a prior endorsement from a post that no longer fit your position.`;
     case "follow":
       return `You started following an actor who seems relevant to your interests.`;
+    case "unfollow":
+      return `You stopped following an actor whose content no longer served your goals.`;
+    case "mute":
+      return `You muted an actor to reduce unwanted content in your feed.`;
+    case "block":
+      return `You blocked an actor to cut off direct visibility and interaction.`;
+    case "report":
+      return `You reported a post to the platform for moderation review.`;
+    case "delete":
+      return `You removed one of your own posts from the platform.`;
     default:
       return `You stayed silent this round.`;
   }

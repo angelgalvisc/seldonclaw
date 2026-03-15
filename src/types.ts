@@ -186,6 +186,7 @@ export interface Post {
   content: string;
   reply_to?: string | null;
   quote_of?: string | null;
+  post_kind?: "post" | "comment" | "repost" | "quote";
   round_num: number;
   sim_timestamp: string;
   likes: number;
@@ -193,6 +194,9 @@ export interface Post {
   comments: number;
   reach: number;
   sentiment?: number | null;
+  is_deleted?: number;
+  deleted_at?: string | null;
+  moderation_status?: "none" | "flagged" | "shadowed";
 }
 
 export interface Exposure {
@@ -208,6 +212,30 @@ export interface Follow {
   following_id: string;
   run_id: string;
   since_round?: number;
+}
+
+export interface Mute {
+  actor_id: string;
+  muted_actor_id: string;
+  run_id: string;
+  since_round?: number;
+}
+
+export interface Block {
+  actor_id: string;
+  blocked_actor_id: string;
+  run_id: string;
+  since_round?: number;
+}
+
+export interface ReportRow {
+  id: string;
+  run_id: string;
+  round_num: number;
+  reporter_id: string;
+  post_id: string;
+  reason?: string | null;
+  created_at?: string;
 }
 
 export interface NarrativeRow {
@@ -304,6 +332,10 @@ export interface PostSnapshot {
   comments: number;
   reach: number;
   replyTo?: string;
+  quoteOf?: string;
+  postKind?: "post" | "comment" | "repost" | "quote";
+  isDeleted?: boolean;
+  moderationStatus?: "none" | "flagged" | "shadowed";
 }
 
 export interface ActorSnapshot {
@@ -328,6 +360,14 @@ export interface EngagementStats {
   reach: number;
 }
 
+export interface ActorInteractionTrace {
+  engagedPostIds: Set<string>;
+  authorScores: Map<string, number>;
+  topicScores: Map<string, number>;
+  inNetworkScore: number;
+  outOfNetworkScore: number;
+}
+
 export interface StanceChange {
   actorId: string;
   actorName: string;
@@ -344,6 +384,9 @@ export interface PlatformState {
   actors: Map<string, ActorSnapshot>;
   communities: CommunitySnapshot[];
   exposedActors: Map<string, Set<string>>; // postId → actorIds already exposed
+  muteGraph?: Map<string, Set<string>>;
+  blockGraph?: Map<string, Set<string>>;
+  interactionTrace?: Map<string, ActorInteractionTrace>;
   postEmbeddings?: Map<string, number[]>;
   actorInterestEmbeddings?: Map<string, number[]>;
 }

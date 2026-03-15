@@ -40,6 +40,7 @@ import {
   type SearchCandidate,
   type SearchExecution,
 } from "./search.js";
+import { getAllowedActionsForTier } from "./platform.js";
 
 export interface ScheduledActorAction {
   index: number;
@@ -98,6 +99,7 @@ export async function scheduleRoundActions(
       opts.activeEvents,
       actorTopics
     );
+    const availableActions = getAllowedActionsForTier(opts.config.platform, route.tier);
 
     if (route.tier === "C") {
       immediate.push({
@@ -106,7 +108,13 @@ export async function scheduleRoundActions(
         actorTopics,
         feed,
         route,
-        decision: applyTierCRules(actor, feed, opts.config.cognition, opts.rng),
+        decision: applyTierCRules(
+          actor,
+          feed,
+          opts.config.cognition,
+          opts.rng,
+          availableActions
+        ),
         searchRequests: [],
       });
       continue;
@@ -129,6 +137,8 @@ export async function scheduleRoundActions(
       beliefs,
       actorTopics,
       simContext,
+      availableActions,
+      opts.config.platform.name,
       opts.roundNum
     );
     pending.push({

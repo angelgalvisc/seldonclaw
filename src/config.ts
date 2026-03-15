@@ -9,6 +9,8 @@
 
 import { readFileSync } from "node:fs";
 import YAML from "yaml";
+import type { FeedAlgorithm, PlatformAction, PlatformPolicyConfig } from "./platform.js";
+import { DEFAULT_PLATFORM_POLICY, PLATFORM_ACTIONS } from "./platform.js";
 
 // ═══════════════════════════════════════════════════════
 // CONFIG TYPES — from PLAN.md §SimConfig
@@ -19,6 +21,7 @@ export interface SimConfig {
   cognition: CognitionConfig;
   providers: ProvidersConfig;
   nullclaw: NullClawConfig;
+  platform: PlatformPolicyConfig;
   search: SearchConfig;
   feed: FeedConfig;
   propagation: PropagationConfig;
@@ -28,7 +31,7 @@ export interface SimConfig {
 }
 
 export interface SimulationConfig {
-  platform: "x";
+  platform: string;
   totalHours: number;
   minutesPerRound: number;
   timezone: string;
@@ -86,10 +89,14 @@ export interface NullClawConfig {
 
 export interface FeedConfig {
   size: number;
+  algorithm: FeedAlgorithm;
   recencyWeight: number;
   popularityWeight: number;
   relevanceWeight: number;
   echoChamberStrength: number;
+  traceWeight: number;
+  outOfNetworkRatio: number;
+  diversityWeight: number;
   embeddingEnabled: boolean;
   embeddingWeight: number;
   embeddingModel: string;
@@ -239,6 +246,7 @@ const DEFAULTS: SimConfig = {
       capabilities: ["decide", "interview"],
     },
   },
+  platform: structuredClone(DEFAULT_PLATFORM_POLICY),
   search: {
     enabled: false,
     endpoint: "http://localhost:8888",
@@ -264,10 +272,14 @@ const DEFAULTS: SimConfig = {
   },
   feed: {
     size: 20,
+    algorithm: "hybrid",
     recencyWeight: 0.4,
     popularityWeight: 0.3,
     relevanceWeight: 0.3,
     echoChamberStrength: 0.5,
+    traceWeight: 0.25,
+    outOfNetworkRatio: 0.35,
+    diversityWeight: 0.2,
     embeddingEnabled: false,
     embeddingWeight: 0.25,
     embeddingModel: "hash-embedding-v1",
@@ -315,10 +327,10 @@ const DEFAULTS: SimConfig = {
 export function loadConfig(filePath: string): SimConfig {
   const raw = readFileSync(filePath, "utf-8");
   const parsed = YAML.parse(raw) as Partial<SimConfig>;
-  const config = deepMerge(
+  const config = normalizeConfig(deepMerge(
     DEFAULTS as unknown as Record<string, unknown>,
     (parsed ?? {}) as Record<string, unknown>
-  ) as unknown as SimConfig;
+  ) as unknown as SimConfig, parsed);
   validateConfig(config);
   return config;
 }
@@ -328,10 +340,10 @@ export function loadConfig(filePath: string): SimConfig {
  */
 export function parseConfig(yamlString: string): SimConfig {
   const parsed = YAML.parse(yamlString) as Partial<SimConfig>;
-  const config = deepMerge(
+  const config = normalizeConfig(deepMerge(
     DEFAULTS as unknown as Record<string, unknown>,
     (parsed ?? {}) as Record<string, unknown>
-  ) as unknown as SimConfig;
+  ) as unknown as SimConfig, parsed);
   validateConfig(config);
   return config;
 }
@@ -341,6 +353,20 @@ export function parseConfig(yamlString: string): SimConfig {
  */
 export function defaultConfig(): SimConfig {
   return structuredClone(DEFAULTS);
+}
+
+function normalizeConfig(config: SimConfig, parsed: Partial<SimConfig>): SimConfig {
+  if (!parsed.platform?.name && parsed.simulation?.platform) {
+    config.platform.name = parsed.simulation.platform;
+  }
+
+  if (!parsed.platform?.recsys && parsed.feed?.algorithm) {
+    config.platform.recsys = parsed.feed.algorithm;
+  }
+
+  config.simulation.platform = config.platform.name;
+  config.feed.algorithm = config.platform.recsys;
+  return config;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -428,11 +454,19 @@ function validateConfig(config: SimConfig): void {
       )
     );
   }
-  if (config.simulation.platform !== "x") {
+  if (!config.simulation.platform.trim()) {
     errors.push(
       new ConfigError(
-        'platform must be "x" in v1',
+        "platform must not be empty",
         "simulation.platform"
+      )
+    );
+  }
+  if (config.platform.name !== config.simulation.platform) {
+    errors.push(
+      new ConfigError(
+        "platform.name must match simulation.platform",
+        "platform.name"
       )
     );
   }
@@ -495,6 +529,22 @@ function validateConfig(config: SimConfig): void {
   if (config.feed.size < 1) {
     errors.push(new ConfigError("feed size must be >= 1", "feed.size"));
   }
+  if (
+    ![
+      "chronological",
+      "heuristic",
+      "trace-aware",
+      "embedding",
+      "hybrid",
+    ].includes(config.feed.algorithm)
+  ) {
+    errors.push(
+      new ConfigError(
+        "feed.algorithm must be chronological, heuristic, trace-aware, embedding, or hybrid",
+        "feed.algorithm"
+      )
+    );
+  }
   const weightSum =
     config.feed.recencyWeight +
     config.feed.popularityWeight +
@@ -515,6 +565,71 @@ function validateConfig(config: SimConfig): void {
       new ConfigError(
         "embeddingWeight must be between 0 and 1",
         "feed.embeddingWeight"
+      )
+    );
+  }
+  if (config.feed.traceWeight < 0 || config.feed.traceWeight > 1) {
+    errors.push(
+      new ConfigError(
+        "traceWeight must be between 0 and 1",
+        "feed.traceWeight"
+      )
+    );
+  }
+  if (config.feed.outOfNetworkRatio < 0 || config.feed.outOfNetworkRatio > 1) {
+    errors.push(
+      new ConfigError(
+        "outOfNetworkRatio must be between 0 and 1",
+        "feed.outOfNetworkRatio"
+      )
+    );
+  }
+  if (config.feed.diversityWeight < 0 || config.feed.diversityWeight > 1) {
+    errors.push(
+      new ConfigError(
+        "diversityWeight must be between 0 and 1",
+        "feed.diversityWeight"
+      )
+    );
+  }
+
+  for (const action of config.platform.actions) {
+    if (!(PLATFORM_ACTIONS as readonly string[]).includes(action)) {
+      errors.push(
+        new ConfigError(
+          `unknown platform action: ${action}`,
+          "platform.actions"
+        )
+      );
+    }
+  }
+  const allKnownActions = new Set<string>(PLATFORM_ACTIONS);
+  for (const tier of ["A", "B", "C"] as const) {
+    const tierActions = config.platform.tierAllowedActions[tier] ?? [];
+    for (const action of tierActions) {
+      if (!allKnownActions.has(action)) {
+        errors.push(
+          new ConfigError(
+            `unknown action ${action} in tierAllowedActions.${tier}`,
+            `platform.tierAllowedActions.${tier}`
+          )
+        );
+      }
+      if (!config.platform.actions.includes(action as PlatformAction)) {
+        errors.push(
+          new ConfigError(
+            `tierAllowedActions.${tier} contains action not enabled in platform.actions: ${action}`,
+            `platform.tierAllowedActions.${tier}`
+          )
+        );
+      }
+    }
+  }
+  if (config.platform.moderation.reportThreshold < 1) {
+    errors.push(
+      new ConfigError(
+        "reportThreshold must be >= 1",
+        "platform.moderation.reportThreshold"
       )
     );
   }

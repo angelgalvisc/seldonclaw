@@ -21,6 +21,9 @@ import type {
   Post,
   Exposure,
   Follow,
+  Mute,
+  Block,
+  ReportRow,
   NarrativeRow,
   ActorMemoryRow,
   PostEmbeddingRow,
@@ -28,6 +31,7 @@ import type {
   SearchCacheRow,
   SearchRequestRow,
   SkippedRoundSpanRow,
+  ActorInteractionTrace,
   PostSnapshot,
   ActorSnapshot,
   CommunitySnapshot,
@@ -103,6 +107,20 @@ export interface GraphStore {
   addPost(post: Post): void;
   addExposure(exposure: Exposure): void;
   addFollow(follow: Follow): void;
+  removeFollow(followerId: string, followingId: string, runId: string): void;
+  removeLike(actorId: string, postId: string, runId: string): boolean;
+  markPostDeleted(postId: string, actorId: string, runId: string): boolean;
+  addMute(mute: Mute): void;
+  removeMute(actorId: string, mutedActorId: string, runId: string): void;
+  addBlock(block: Block): void;
+  removeBlock(actorId: string, blockedActorId: string, runId: string): void;
+  addReport(report: ReportRow): void;
+  getReportedPostIdsForRound(runId: string, roundNum: number): string[];
+  countReportsForPost(postId: string, runId: string): number;
+  setPostModerationStatus(
+    postId: string,
+    status: "none" | "flagged" | "shadowed"
+  ): void;
   updatePostEngagement(
     postId: string,
     field: "likes" | "reposts" | "comments" | "reach",
@@ -315,6 +333,20 @@ export class SQLiteGraphStore implements GraphStore {
 
     // Initialize schema
     this.db.exec(SCHEMA_SQL);
+    this.ensureOptionalColumns();
+  }
+
+  private ensureOptionalColumns(): void {
+    this.ensureColumn("posts", "post_kind", "ALTER TABLE posts ADD COLUMN post_kind TEXT DEFAULT 'post'");
+    this.ensureColumn("posts", "is_deleted", "ALTER TABLE posts ADD COLUMN is_deleted INTEGER DEFAULT 0");
+    this.ensureColumn("posts", "deleted_at", "ALTER TABLE posts ADD COLUMN deleted_at TEXT");
+    this.ensureColumn("posts", "moderation_status", "ALTER TABLE posts ADD COLUMN moderation_status TEXT DEFAULT 'none'");
+  }
+
+  private ensureColumn(table: string, column: string, ddl: string): void {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (rows.some((row) => row.name === column)) return;
+    this.db.exec(ddl);
   }
 
   // ─── Provenance ───
@@ -762,15 +794,18 @@ export class SQLiteGraphStore implements GraphStore {
   addPost(post: Post): void {
     this.db
       .prepare(
-        `INSERT INTO posts (id, run_id, author_id, content, reply_to, quote_of, round_num,
-         sim_timestamp, likes, reposts, comments, reach, sentiment)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO posts (id, run_id, author_id, content, reply_to, quote_of, post_kind, round_num,
+         sim_timestamp, likes, reposts, comments, reach, sentiment, is_deleted, deleted_at, moderation_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         post.id, post.run_id, post.author_id, post.content,
-        post.reply_to ?? null, post.quote_of ?? null, post.round_num,
+        post.reply_to ?? null, post.quote_of ?? null, post.post_kind ?? "post", post.round_num,
         post.sim_timestamp, post.likes, post.reposts, post.comments,
-        post.reach, post.sentiment ?? null
+        post.reach, post.sentiment ?? null,
+        post.is_deleted ?? 0,
+        post.deleted_at ?? null,
+        post.moderation_status ?? "none"
       );
   }
 
@@ -803,6 +838,130 @@ export class SQLiteGraphStore implements GraphStore {
       );
   }
 
+  removeFollow(followerId: string, followingId: string, runId: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM follows WHERE follower_id = ? AND following_id = ? AND run_id = ?`
+      )
+      .run(followerId, followingId, runId);
+  }
+
+  removeLike(actorId: string, postId: string, runId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT rowid, round_num FROM exposures
+         WHERE actor_id = ? AND post_id = ? AND run_id = ? AND reaction = 'liked'
+         ORDER BY round_num DESC LIMIT 1`
+      )
+      .get(actorId, postId, runId) as { rowid: number; round_num: number } | undefined;
+    if (!row) return false;
+
+    this.db.prepare(`DELETE FROM exposures WHERE rowid = ?`).run(row.rowid);
+    this.updatePostEngagement(postId, "likes", -1);
+    return true;
+  }
+
+  markPostDeleted(postId: string, actorId: string, runId: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE posts
+         SET is_deleted = 1, deleted_at = COALESCE(deleted_at, datetime('now'))
+         WHERE id = ? AND author_id = ? AND run_id = ? AND COALESCE(is_deleted, 0) = 0`
+      )
+      .run(postId, actorId, runId);
+    return result.changes > 0;
+  }
+
+  addMute(mute: Mute): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO mutes (actor_id, muted_actor_id, run_id, since_round)
+         VALUES (?, ?, ?, ?)`
+      )
+      .run(
+        mute.actor_id,
+        mute.muted_actor_id,
+        mute.run_id,
+        mute.since_round ?? null
+      );
+  }
+
+  removeMute(actorId: string, mutedActorId: string, runId: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM mutes WHERE actor_id = ? AND muted_actor_id = ? AND run_id = ?`
+      )
+      .run(actorId, mutedActorId, runId);
+  }
+
+  addBlock(block: Block): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO blocks (actor_id, blocked_actor_id, run_id, since_round)
+         VALUES (?, ?, ?, ?)`
+      )
+      .run(
+        block.actor_id,
+        block.blocked_actor_id,
+        block.run_id,
+        block.since_round ?? null
+      );
+  }
+
+  removeBlock(actorId: string, blockedActorId: string, runId: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM blocks WHERE actor_id = ? AND blocked_actor_id = ? AND run_id = ?`
+      )
+      .run(actorId, blockedActorId, runId);
+  }
+
+  addReport(report: ReportRow): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO reports
+         (id, run_id, round_num, reporter_id, post_id, reason)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        report.id,
+        report.run_id,
+        report.round_num,
+        report.reporter_id,
+        report.post_id,
+        report.reason ?? null
+      );
+  }
+
+  getReportedPostIdsForRound(runId: string, roundNum: number): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT post_id FROM reports WHERE run_id = ? AND round_num = ? ORDER BY post_id`
+      )
+      .all(runId, roundNum) as Array<{ post_id: string }>;
+    return rows.map((row) => row.post_id);
+  }
+
+  countReportsForPost(postId: string, runId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) as count FROM reports WHERE post_id = ? AND run_id = ?`
+      )
+      .get(postId, runId) as { count: number };
+    return row.count;
+  }
+
+  setPostModerationStatus(
+    postId: string,
+    status: "none" | "flagged" | "shadowed"
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE posts SET moderation_status = ? WHERE id = ?`
+      )
+      .run(status, postId);
+  }
+
   updatePostEngagement(
     postId: string,
     field: "likes" | "reposts" | "comments" | "reach",
@@ -812,7 +971,7 @@ export class SQLiteGraphStore implements GraphStore {
     const allowed = ["likes", "reposts", "comments", "reach"];
     if (!allowed.includes(field)) throw new Error(`Invalid field: ${field}`);
     this.db
-      .prepare(`UPDATE posts SET ${field} = ${field} + ? WHERE id = ?`)
+      .prepare(`UPDATE posts SET ${field} = MAX(0, ${field} + ?) WHERE id = ?`)
       .run(increment, postId);
   }
 
@@ -835,6 +994,8 @@ export class SQLiteGraphStore implements GraphStore {
       .prepare(
         `SELECT * FROM posts
          WHERE author_id = ? AND run_id = ? AND round_num >= ?
+         AND COALESCE(is_deleted, 0) = 0
+         AND COALESCE(moderation_status, 'none') != 'shadowed'
          ORDER BY round_num DESC`
       )
       .all(actorId, runId, sinceRound) as Post[];
@@ -881,6 +1042,8 @@ export class SQLiteGraphStore implements GraphStore {
       .prepare(
         `SELECT * FROM posts
          WHERE run_id = ? AND round_num >= ?
+         AND COALESCE(is_deleted, 0) = 0
+         AND COALESCE(moderation_status, 'none') != 'shadowed'
          AND (reply_to IN (SELECT id FROM posts WHERE author_id = ?)
               OR content LIKE '%@' || (SELECT handle FROM actors WHERE id = ?) || '%')
          ORDER BY round_num DESC`
@@ -923,7 +1086,12 @@ export class SQLiteGraphStore implements GraphStore {
     // Recent posts with topics denormalized
     const rawPosts = this.db
       .prepare(
-        `SELECT * FROM posts WHERE run_id = ? AND round_num >= ? ORDER BY round_num DESC`
+        `SELECT * FROM posts
+         WHERE run_id = ?
+           AND round_num >= ?
+           AND COALESCE(is_deleted, 0) = 0
+           AND COALESCE(moderation_status, 'none') != 'shadowed'
+         ORDER BY round_num DESC`
       )
       .all(runId, sinceRound) as Post[];
 
@@ -944,6 +1112,10 @@ export class SQLiteGraphStore implements GraphStore {
         comments: p.comments,
         reach: p.reach,
         replyTo: p.reply_to ?? undefined,
+        quoteOf: p.quote_of ?? undefined,
+        postKind: p.post_kind ?? "post",
+        isDeleted: Boolean(p.is_deleted),
+        moderationStatus: p.moderation_status ?? "none",
       };
     });
 
@@ -956,6 +1128,26 @@ export class SQLiteGraphStore implements GraphStore {
       const existing = followGraph.get(f.follower_id) ?? [];
       existing.push(f.following_id);
       followGraph.set(f.follower_id, existing);
+    }
+
+    const muteGraph = new Map<string, Set<string>>();
+    const muteRows = this.db
+      .prepare(`SELECT actor_id, muted_actor_id FROM mutes WHERE run_id = ?`)
+      .all(runId) as Array<{ actor_id: string; muted_actor_id: string }>;
+    for (const mute of muteRows) {
+      const existing = muteGraph.get(mute.actor_id) ?? new Set<string>();
+      existing.add(mute.muted_actor_id);
+      muteGraph.set(mute.actor_id, existing);
+    }
+
+    const blockGraph = new Map<string, Set<string>>();
+    const blockRows = this.db
+      .prepare(`SELECT actor_id, blocked_actor_id FROM blocks WHERE run_id = ?`)
+      .all(runId) as Array<{ actor_id: string; blocked_actor_id: string }>;
+    for (const block of blockRows) {
+      const existing = blockGraph.get(block.actor_id) ?? new Set<string>();
+      existing.add(block.blocked_actor_id);
+      blockGraph.set(block.actor_id, existing);
     }
 
     // Engagement by post
@@ -1045,6 +1237,63 @@ export class SQLiteGraphStore implements GraphStore {
       set.add(e.actor_id);
     }
 
+    const postTopicsById = new Map(recentPosts.map((post) => [post.id, post.topics] as const));
+    const interactionTrace = new Map<string, ActorInteractionTrace>();
+    const interactionRows = this.db
+      .prepare(
+        `SELECT e.actor_id, e.post_id, e.reaction, p.author_id, p.content, p.quote_of, p.reply_to
+         FROM exposures e
+         JOIN posts p ON p.id = e.post_id
+         WHERE e.run_id = ?
+           AND e.round_num >= ?
+           AND e.reaction != 'seen'
+           AND COALESCE(p.is_deleted, 0) = 0
+           AND COALESCE(p.moderation_status, 'none') != 'shadowed'`
+      )
+      .all(runId, sinceRound) as Array<{
+      actor_id: string;
+      post_id: string;
+      reaction: string;
+      author_id: string;
+      content: string;
+    }>;
+
+    for (const row of interactionRows) {
+      const existing = interactionTrace.get(row.actor_id) ?? {
+        engagedPostIds: new Set<string>(),
+        authorScores: new Map<string, number>(),
+        topicScores: new Map<string, number>(),
+        inNetworkScore: 0,
+        outOfNetworkScore: 0,
+      };
+      const weight =
+        row.reaction === "reposted"
+          ? 3
+          : row.reaction === "commented"
+            ? 2
+            : row.reaction === "liked"
+              ? 1
+              : 0.5;
+      existing.engagedPostIds.add(row.post_id);
+      existing.authorScores.set(
+        row.author_id,
+        (existing.authorScores.get(row.author_id) ?? 0) + weight
+      );
+
+      const postTopics = postTopicsById.get(row.post_id) ?? [];
+      for (const topic of postTopics) {
+        existing.topicScores.set(topic, (existing.topicScores.get(topic) ?? 0) + weight);
+      }
+
+      const followsAuthor = new Set(followGraph.get(row.actor_id) ?? []).has(row.author_id);
+      if (followsAuthor) {
+        existing.inNetworkScore += weight;
+      } else {
+        existing.outOfNetworkScore += weight;
+      }
+      interactionTrace.set(row.actor_id, existing);
+    }
+
     return {
       runId,
       recentPosts,
@@ -1053,6 +1302,9 @@ export class SQLiteGraphStore implements GraphStore {
       actors,
       communities,
       exposedActors,
+      muteGraph,
+      blockGraph,
+      interactionTrace,
     };
   }
 
@@ -1532,10 +1784,14 @@ export class SQLiteGraphStore implements GraphStore {
     return this.db
       .prepare(
         `SELECT round_num as round,
-                SUM(CASE WHEN reply_to IS NULL AND quote_of IS NULL THEN 1 ELSE 0 END) as posts,
-                SUM(CASE WHEN reply_to IS NOT NULL THEN 1 ELSE 0 END) as comments,
-                SUM(CASE WHEN quote_of IS NOT NULL THEN 1 ELSE 0 END) as reposts
-         FROM posts WHERE run_id = ? GROUP BY round_num ORDER BY round_num`
+                SUM(CASE WHEN COALESCE(post_kind, 'post') = 'post' THEN 1 ELSE 0 END) as posts,
+                SUM(CASE WHEN COALESCE(post_kind, 'post') = 'comment' THEN 1 ELSE 0 END) as comments,
+                SUM(CASE WHEN COALESCE(post_kind, 'post') IN ('repost', 'quote') THEN 1 ELSE 0 END) as reposts
+         FROM posts
+         WHERE run_id = ?
+           AND COALESCE(is_deleted, 0) = 0
+           AND COALESCE(moderation_status, 'none') != 'shadowed'
+         GROUP BY round_num ORDER BY round_num`
       )
       .all(runId) as Array<{
         round: number;
@@ -1561,7 +1817,10 @@ export class SQLiteGraphStore implements GraphStore {
         `SELECT p.author_id as actor_id, a.name as actor_name, a.cognition_tier,
                 SUM(p.reach) as total_reach, SUM(p.likes) as total_likes, COUNT(*) as total_posts
          FROM posts p JOIN actors a ON a.id = p.author_id
-         WHERE p.run_id = ? GROUP BY p.author_id ORDER BY total_reach DESC LIMIT ?`
+         WHERE p.run_id = ?
+           AND COALESCE(p.is_deleted, 0) = 0
+           AND COALESCE(p.moderation_status, 'none') != 'shadowed'
+         GROUP BY p.author_id ORDER BY total_reach DESC LIMIT ?`
       )
       .all(runId, limit) as Array<{
         actor_id: string;

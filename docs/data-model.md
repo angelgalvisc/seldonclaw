@@ -17,7 +17,7 @@ SeldonClaw's relational model is organized in five layers:
 2. **Knowledge Graph**
    Entity/edge ontology, instances, aliases, merges, and provenance links.
 3. **Social Simulation**
-   Actors, communities, follows, posts, exposures, narratives, memories, and embedding caches.
+   Actors, communities, follows, mutes, blocks, posts, reports, exposures, narratives, memories, and embedding caches.
 4. **Observability**
    Telemetry, round summaries, skipped-round audit spans, and per-actor search audit logs.
 5. **Reproducibility**
@@ -119,9 +119,12 @@ erDiagram
   RUN_MANIFEST ||--o{ COMMUNITY_OVERLAP : scopes
   RUN_MANIFEST ||--o{ POSTS : scopes
   RUN_MANIFEST ||--o{ FOLLOWS : scopes
+  RUN_MANIFEST ||--o{ MUTES : scopes
+  RUN_MANIFEST ||--o{ BLOCKS : scopes
   RUN_MANIFEST ||--o{ EXPOSURES : scopes
   RUN_MANIFEST ||--o{ NARRATIVES : scopes
   RUN_MANIFEST ||--o{ ACTOR_MEMORIES : scopes
+  RUN_MANIFEST ||--o{ REPORTS : scopes
   RUN_MANIFEST ||--o{ SEARCH_REQUESTS : scopes
 
   ENTITIES ||--o{ ACTORS : optional_origin
@@ -130,14 +133,20 @@ erDiagram
   ACTORS ||--o{ POSTS : authors
   ACTORS ||--o{ FOLLOWS : follower_id
   ACTORS ||--o{ FOLLOWS : following_id
+  ACTORS ||--o{ MUTES : actor_id
+  ACTORS ||--o{ MUTES : muted_actor_id
+  ACTORS ||--o{ BLOCKS : actor_id
+  ACTORS ||--o{ BLOCKS : blocked_actor_id
   ACTORS ||--o{ EXPOSURES : sees
   ACTORS ||--o{ ACTOR_MEMORIES : remembers
   ACTORS ||--o{ ACTOR_INTEREST_EMBEDDINGS : semantic_profile
+  ACTORS ||--o{ REPORTS : reports
   ACTORS ||--o{ SEARCH_REQUESTS : searches
   POSTS ||--o{ POST_TOPICS : tagged_with
   POSTS ||--o{ EXPOSURES : exposed_as
   POSTS ||--o{ POST_EMBEDDINGS : semantic_representation
   POSTS ||--o{ ACTOR_MEMORIES : source_post
+  POSTS ||--o{ REPORTS : reported_post
 
   COMMUNITIES ||--o{ ACTORS : membership
   COMMUNITIES ||--o{ COMMUNITY_OVERLAP : community_a
@@ -185,9 +194,12 @@ erDiagram
     text id PK
     text run_id FK
     text author_id FK
+    text post_kind
     int round_num
     text sim_timestamp
     real sentiment
+    int is_deleted
+    text moderation_status
   }
   POST_TOPICS {
     text post_id FK
@@ -196,6 +208,18 @@ erDiagram
   FOLLOWS {
     text follower_id FK
     text following_id FK
+    text run_id FK
+    int since_round
+  }
+  MUTES {
+    text actor_id FK
+    text muted_actor_id FK
+    text run_id FK
+    int since_round
+  }
+  BLOCKS {
+    text actor_id FK
+    text blocked_actor_id FK
     text run_id FK
     int since_round
   }
@@ -219,6 +243,13 @@ erDiagram
     int round_num
     text kind
     real salience
+  }
+  REPORTS {
+    text id PK
+    text run_id FK
+    int round_num
+    text reporter_id FK
+    text post_id FK
   }
   POST_EMBEDDINGS {
     text post_id FK
@@ -379,9 +410,13 @@ erDiagram
 
 - `documents`, `chunks`, `claims`, `entities`, and `edges` are the base knowledge corpus.
 - `actors`, `posts`, `follows`, `exposures`, `narratives`, `actor_memories`, `telemetry`, `rounds`, `decision_cache`, `snapshots`, `search_requests`, and `skipped_rounds` are **run-scoped**.
+- `mutes`, `blocks`, and `reports` are also **run-scoped** and participate directly in runtime visibility / moderation.
 - `communities` and `community_overlap` are also **run-scoped** in the current implementation.
 - `post_embeddings` and `actor_interest_embeddings` are per-post / per-actor caches keyed by model id.
 - `search_cache` is reusable across runs and intentionally not foreign-keyed to a specific actor or round.
+- `posts.post_kind` distinguishes `post`, `comment`, `repost`, and `quote`.
+- `posts.is_deleted = 1` soft-deletes content without removing audit history.
+- `posts.moderation_status = 'shadowed'` removes content from feed and propagation projections.
 - `entities.merged_into IS NULL` means the entity is active and should appear in search/build steps.
 - `exposure_summary` is a view over `exposures`, not a source-of-truth table.
 
@@ -390,7 +425,7 @@ erDiagram
 These are not separate tables, but they are important to keep in mind when building the CLI or shell:
 
 - `PlatformState`
-  Read-only projection over `posts`, `post_topics`, `actors`, `communities`, `community_overlap`, `follows`, `exposures`, `post_embeddings`, and `actor_interest_embeddings`.
+  Read-only projection over `posts`, `post_topics`, `actors`, `communities`, `community_overlap`, `follows`, `mutes`, `blocks`, `exposures`, `post_embeddings`, and `actor_interest_embeddings`, plus derived interaction traces.
 - `ActorContext`
   Read model assembled from `actors`, `actor_topics`, `actor_beliefs`, `posts`, `exposures`, and `actor_memories`.
 - `NarrativeState`

@@ -290,6 +290,24 @@ describe("applyTierCRules", () => {
     // Non-aligned → should never like (sentiment_bias > 0 but post sentiment < 0)
     expect(likeCount).toBe(0);
   });
+
+  it("respects available actions for tier C", () => {
+    const actor = makeActor({ sentiment_bias: 0.5 });
+    const feed = [makeFeedItem({
+      post: makePost({ likes: 100, reposts: 50 }),
+      score: 0.9,
+    })];
+
+    const result = applyTierCRules(
+      actor,
+      feed,
+      defaultCognitionConfig,
+      new SeedablePRNG(42),
+      ["idle"]
+    );
+
+    expect(result.action).toBe("idle");
+  });
 });
 
 // ═══════════════════════════════════════════════════════

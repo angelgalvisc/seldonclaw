@@ -18,6 +18,7 @@ import type {
   PlatformState,
   PostSnapshot,
   FeedItem,
+  ActorInteractionTrace,
 } from "./db.js";
 import type { FeedConfig } from "./config.js";
 import { embeddingSimilarity } from "./embeddings.js";
@@ -68,15 +69,17 @@ export function buildFeed(
       state
     );
 
-    let score =
-      recency * config.recencyWeight +
-      popularity * config.popularityWeight +
-      relevance * config.relevanceWeight +
-      affinity * 0.1;
-
-    if (config.embeddingEnabled) {
-      score += embeddingSimilarity(actor.id, post.id, state) * config.embeddingWeight;
-    }
+    let score = scoreByAlgorithm({
+      actorId: actor.id,
+      post,
+      source,
+      state,
+      config,
+      recency,
+      popularity,
+      relevance,
+      affinity,
+    });
 
     // Echo chamber: boost aligned sentiment
     if (actorCommunity && sameSign(post.sentiment, actor.sentiment_bias)) {
@@ -88,7 +91,7 @@ export function buildFeed(
 
   // 5. Sort by score descending, take top N
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, config.size);
+  return applyNetworkMix(scored, config);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -118,6 +121,7 @@ function collectCandidates(
   const followSet = new Set(following);
   for (const post of state.recentPosts) {
     if (post.authorId === actorId) continue;
+    if (!isVisibleToActor(actorId, post.authorId, state)) continue;
     if (followSet.has(post.authorId) && !seen.has(post.id)) {
       seen.add(post.id);
       candidates.push({ post, source: "follow" });
@@ -137,6 +141,7 @@ function collectCandidates(
 
       for (const post of state.recentPosts) {
         if (post.authorId === actorId || seen.has(post.id)) continue;
+        if (!isVisibleToActor(actorId, post.authorId, state)) continue;
         const authorSnapshot = state.actors.get(post.authorId);
         if (
           authorSnapshot &&
@@ -151,7 +156,7 @@ function collectCandidates(
 
   // c. Trending posts (remaining posts by engagement)
   const byEngagement = [...state.recentPosts]
-    .filter((p) => p.authorId !== actorId && !seen.has(p.id))
+    .filter((p) => p.authorId !== actorId && !seen.has(p.id) && isVisibleToActor(actorId, p.authorId, state))
     .sort(
       (a, b) =>
         b.likes + b.reposts + b.comments - (a.likes + a.reposts + a.comments)
@@ -241,4 +246,126 @@ function communityAffinity(
  */
 function sameSign(a: number, b: number): boolean {
   return (a >= 0 && b >= 0) || (a < 0 && b < 0);
+}
+
+function isVisibleToActor(
+  actorId: string,
+  authorId: string,
+  state: PlatformState
+): boolean {
+  const muted = state.muteGraph?.get(actorId);
+  if (muted?.has(authorId)) return false;
+
+  const actorBlocks = state.blockGraph?.get(actorId);
+  if (actorBlocks?.has(authorId)) return false;
+
+  const authorBlocks = state.blockGraph?.get(authorId);
+  if (authorBlocks?.has(actorId)) return false;
+
+  return true;
+}
+
+function scoreByAlgorithm(opts: {
+  actorId: string;
+  post: PostSnapshot;
+  source: FeedItem["source"];
+  state: PlatformState;
+  config: FeedConfig;
+  recency: number;
+  popularity: number;
+  relevance: number;
+  affinity: number;
+}): number {
+  const base =
+    opts.recency * opts.config.recencyWeight +
+    opts.popularity * opts.config.popularityWeight +
+    opts.relevance * opts.config.relevanceWeight +
+    opts.affinity * 0.1;
+
+  if (opts.config.algorithm === "chronological") {
+    return opts.recency;
+  }
+
+  let score = base;
+  if (opts.config.algorithm === "embedding" || opts.config.algorithm === "hybrid") {
+    if (opts.config.embeddingEnabled) {
+      score += embeddingSimilarity(opts.actorId, opts.post.id, opts.state) * opts.config.embeddingWeight;
+    }
+  }
+
+  if (opts.config.algorithm === "trace-aware" || opts.config.algorithm === "hybrid") {
+    score += traceScore(opts.actorId, opts.post, opts.source, opts.state, opts.config);
+  }
+
+  return score;
+}
+
+function traceScore(
+  actorId: string,
+  post: PostSnapshot,
+  source: FeedItem["source"],
+  state: PlatformState,
+  config: FeedConfig
+): number {
+  const trace = state.interactionTrace?.get(actorId);
+  if (!trace) return 0;
+
+  const maxAuthorScore = maxMapValue(trace.authorScores);
+  const maxTopicScore = maxMapValue(trace.topicScores);
+  const authorAffinity =
+    maxAuthorScore > 0 ? (trace.authorScores.get(post.authorId) ?? 0) / maxAuthorScore : 0;
+  const topicAffinity =
+    post.topics.length > 0 && maxTopicScore > 0
+      ? post.topics.reduce((sum, topic) => sum + (trace.topicScores.get(topic) ?? 0), 0) /
+        (post.topics.length * maxTopicScore)
+      : 0;
+
+  const totalSourceScore = Math.max(1, trace.inNetworkScore + trace.outOfNetworkScore);
+  const networkAffinity =
+    source === "follow"
+      ? trace.inNetworkScore / totalSourceScore
+      : trace.outOfNetworkScore / totalSourceScore;
+  const noveltyBoost =
+    source === "follow"
+      ? 0
+      : (1 - authorAffinity) * config.diversityWeight;
+
+  return (
+    authorAffinity * config.traceWeight * 0.45 +
+    topicAffinity * config.traceWeight * 0.4 +
+    networkAffinity * config.traceWeight * 0.15 +
+    noveltyBoost
+  );
+}
+
+function applyNetworkMix(feed: FeedItem[], config: FeedConfig): FeedItem[] {
+  if (feed.length <= config.size) return feed;
+
+  const targetOutOfNetwork = Math.round(config.size * config.outOfNetworkRatio);
+  const inNetwork = feed.filter((item) => item.source === "follow");
+  const outOfNetwork = feed.filter((item) => item.source !== "follow");
+
+  const selected: FeedItem[] = [];
+  selected.push(...outOfNetwork.slice(0, targetOutOfNetwork));
+  selected.push(...inNetwork.slice(0, Math.max(0, config.size - selected.length)));
+
+  if (selected.length < config.size) {
+    const seen = new Set(selected.map((item) => item.post.id));
+    for (const item of feed) {
+      if (seen.has(item.post.id)) continue;
+      selected.push(item);
+      seen.add(item.post.id);
+      if (selected.length >= config.size) break;
+    }
+  }
+
+  return selected.slice(0, config.size);
+}
+
+function maxMapValue(map: Map<string, number>): number {
+  let max = 0;
+  for (const value of map.values()) {
+    if (value > max) max = value;
+  }
+  return max;
 }

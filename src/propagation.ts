@@ -88,6 +88,7 @@ export function propagate(
       for (const memberId of members) {
         if (memberId === post.authorId) continue;
         if (alreadyExposed.has(memberId)) continue;
+        if (!canExpose(post.authorId, memberId, state)) continue;
 
         if (rng.next() < exposureProb) {
           newExposures.push({
@@ -118,6 +119,7 @@ export function propagate(
         const otherMembers = [...otherCommunity.memberIds].sort();
         for (const memberId of otherMembers) {
           if (alreadyExposed.has(memberId)) continue;
+          if (!canExpose(post.authorId, memberId, state)) continue;
 
           if (rng.next() < crossProb) {
             newExposures.push({
@@ -164,4 +166,14 @@ function computeVirality(post: PostSnapshot, viralThreshold: number): number {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function canExpose(authorId: string, targetActorId: string, state: PlatformState): boolean {
+  const authorBlocks = state.blockGraph?.get(authorId);
+  if (authorBlocks?.has(targetActorId)) return false;
+
+  const targetBlocks = state.blockGraph?.get(targetActorId);
+  if (targetBlocks?.has(authorId)) return false;
+
+  return true;
 }

@@ -245,6 +245,7 @@ CREATE TABLE IF NOT EXISTS posts (
   content TEXT NOT NULL,
   reply_to TEXT,
   quote_of TEXT,
+  post_kind TEXT DEFAULT 'post',
   round_num INTEGER NOT NULL,
   sim_timestamp TEXT NOT NULL,
   likes INTEGER DEFAULT 0,
@@ -252,6 +253,9 @@ CREATE TABLE IF NOT EXISTS posts (
   comments INTEGER DEFAULT 0,
   reach INTEGER DEFAULT 0,
   sentiment REAL,
+  is_deleted INTEGER DEFAULT 0,
+  deleted_at TEXT,
+  moderation_status TEXT DEFAULT 'none',
   FOREIGN KEY (author_id) REFERENCES actors(id),
   FOREIGN KEY (run_id) REFERENCES run_manifest(id)
 );
@@ -262,6 +266,24 @@ CREATE TABLE IF NOT EXISTS follows (
   run_id TEXT NOT NULL,
   since_round INTEGER,
   PRIMARY KEY (follower_id, following_id, run_id),
+  FOREIGN KEY (run_id) REFERENCES run_manifest(id)
+);
+
+CREATE TABLE IF NOT EXISTS mutes (
+  actor_id TEXT NOT NULL,
+  muted_actor_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  since_round INTEGER,
+  PRIMARY KEY (actor_id, muted_actor_id, run_id),
+  FOREIGN KEY (run_id) REFERENCES run_manifest(id)
+);
+
+CREATE TABLE IF NOT EXISTS blocks (
+  actor_id TEXT NOT NULL,
+  blocked_actor_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  since_round INTEGER,
+  PRIMARY KEY (actor_id, blocked_actor_id, run_id),
   FOREIGN KEY (run_id) REFERENCES run_manifest(id)
 );
 
@@ -374,6 +396,19 @@ CREATE TABLE IF NOT EXISTS search_requests (
   created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY (run_id) REFERENCES run_manifest(id),
   FOREIGN KEY (actor_id) REFERENCES actors(id)
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  round_num INTEGER NOT NULL,
+  reporter_id TEXT NOT NULL,
+  post_id TEXT NOT NULL,
+  reason TEXT,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY (run_id) REFERENCES run_manifest(id),
+  FOREIGN KEY (reporter_id) REFERENCES actors(id),
+  FOREIGN KEY (post_id) REFERENCES posts(id)
 );
 
 CREATE TABLE IF NOT EXISTS skipped_rounds (

@@ -681,6 +681,174 @@ describe("runSimulation — decision execution", () => {
     expect(follows.length).toBeGreaterThan(0);
   });
 
+  it("unfollow action removes existing follow row", async () => {
+    const runId = "run-unfollow";
+    createRun(store, runId);
+    store.addActor(makeActor({ id: "target-user", run_id: runId, activity_level: 0 }));
+    store.addActor(makeActor({
+      id: "follower-1",
+      run_id: runId,
+      activity_level: 1.0,
+      influence_weight: 0.1,
+    }));
+    store.addFollow({
+      follower_id: "follower-1",
+      following_id: "target-user",
+      run_id: runId,
+      since_round: 0,
+    });
+
+    backend.setDefault({ action: "unfollow", target: "target-user", reasoning: "disengage" });
+
+    await runSimulation({ store, config: makeTestConfig({ totalHours: 1 }), backend, runId });
+
+    const follows = (store as any).db
+      .prepare("SELECT * FROM follows WHERE follower_id = 'follower-1' AND following_id = 'target-user'")
+      .all();
+    expect(follows).toHaveLength(0);
+  });
+
+  it("quote action creates quote post and increments original repost counter", async () => {
+    const runId = "run-quote";
+    createRun(store, runId);
+    store.addActor(makeActor({ id: "author-x", run_id: runId, activity_level: 0 }));
+    store.addPost({
+      id: "orig-post",
+      run_id: runId,
+      author_id: "author-x",
+      content: "Original",
+      round_num: 0,
+      sim_timestamp: "2024-01-01T00:00:00",
+      likes: 0,
+      reposts: 0,
+      comments: 0,
+      reach: 0,
+    });
+    store.addActor(makeActor({
+      id: "quoter-1",
+      run_id: runId,
+      activity_level: 1.0,
+      influence_weight: 0.1,
+    }));
+
+    backend.setDefault({ action: "quote", target: "orig-post", content: "adding context", reasoning: "quote" });
+
+    await runSimulation({ store, config: makeTestConfig({ totalHours: 1 }), backend, runId });
+
+    const quotes = (store as any).db
+      .prepare("SELECT * FROM posts WHERE run_id = ? AND quote_of = 'orig-post' AND post_kind = 'quote'")
+      .all(runId);
+    expect(quotes.length).toBeGreaterThan(0);
+    expect(quotes[0].content).toBe("adding context");
+  });
+
+  it("unlike action removes a prior like and decrements the counter", async () => {
+    const runId = "run-unlike";
+    createRun(store, runId);
+    store.addActor(makeActor({ id: "author-x", run_id: runId, activity_level: 0 }));
+    store.addPost({
+      id: "target-post",
+      run_id: runId,
+      author_id: "author-x",
+      content: "Target",
+      round_num: 0,
+      sim_timestamp: "2024-01-01T00:00:00",
+      likes: 1,
+      reposts: 0,
+      comments: 0,
+      reach: 0,
+    });
+    store.addActor(makeActor({
+      id: "actor-unlike",
+      run_id: runId,
+      activity_level: 1.0,
+      influence_weight: 0.1,
+    }));
+    store.addExposure({
+      actor_id: "actor-unlike",
+      post_id: "target-post",
+      round_num: 0,
+      run_id: runId,
+      reaction: "liked",
+    });
+
+    backend.setDefault({ action: "unlike", target: "target-post", reasoning: "retract like" });
+
+    await runSimulation({ store, config: makeTestConfig({ totalHours: 1 }), backend, runId });
+
+    const updated = (store as any).db
+      .prepare("SELECT likes FROM posts WHERE id = 'target-post'")
+      .get() as { likes: number };
+    expect(updated.likes).toBe(0);
+  });
+
+  it("delete action soft-deletes the actor's own post", async () => {
+    const runId = "run-delete";
+    createRun(store, runId);
+    store.addActor(makeActor({
+      id: "author-delete",
+      run_id: runId,
+      activity_level: 1.0,
+      influence_weight: 0.95,
+    }));
+    store.addPost({
+      id: "owned-post",
+      run_id: runId,
+      author_id: "author-delete",
+      content: "I may delete this",
+      round_num: 0,
+      sim_timestamp: "2024-01-01T00:00:00",
+      likes: 0,
+      reposts: 0,
+      comments: 0,
+      reach: 0,
+    });
+
+    backend.setDefault({ action: "delete", target: "owned-post", reasoning: "remove it" });
+
+    await runSimulation({ store, config: makeTestConfig({ totalHours: 1 }), backend, runId });
+
+    const row = (store as any).db
+      .prepare("SELECT is_deleted FROM posts WHERE id = 'owned-post'")
+      .get() as { is_deleted: number };
+    expect(row.is_deleted).toBe(1);
+  });
+
+  it("report action triggers deterministic moderation when threshold is reached", async () => {
+    const runId = "run-report";
+    const cfg = makeTestConfig({ totalHours: 1 });
+    cfg.platform.moderation.reportThreshold = 1;
+    createRun(store, runId);
+    store.addActor(makeActor({ id: "author-x", run_id: runId, activity_level: 0 }));
+    store.addPost({
+      id: "target-post",
+      run_id: runId,
+      author_id: "author-x",
+      content: "Target",
+      round_num: 0,
+      sim_timestamp: "2024-01-01T00:00:00",
+      likes: 0,
+      reposts: 0,
+      comments: 0,
+      reach: 0,
+    });
+    store.addActor(makeActor({
+      id: "reporter-1",
+      run_id: runId,
+      activity_level: 1.0,
+      influence_weight: 0.1,
+    }));
+
+    backend.setDefault({ action: "report", target: "target-post", reasoning: "policy violation" });
+
+    await runSimulation({ store, config: cfg, backend, runId });
+
+    const row = (store as any).db
+      .prepare("SELECT moderation_status FROM posts WHERE id = 'target-post'")
+      .get() as { moderation_status: string };
+    expect(row.moderation_status).toBe("shadowed");
+  });
+
   it("idle action creates no posts", async () => {
     const runId = "run-idle";
     seedActors(runId, 3);

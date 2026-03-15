@@ -36,6 +36,9 @@
         "posts",
         "post_topics",
         "follows",
+        "mutes",
+        "blocks",
+        "reports",
         "exposures",
         "exposure_summary",
         "narratives",
@@ -381,13 +384,17 @@
         {"name": "content", "type": "TEXT", "nullable": false},
         {"name": "reply_to", "type": "TEXT", "nullable": true},
         {"name": "quote_of", "type": "TEXT", "nullable": true},
+        {"name": "post_kind", "type": "TEXT", "nullable": true},
         {"name": "round_num", "type": "INTEGER", "nullable": false},
         {"name": "sim_timestamp", "type": "TEXT", "nullable": false},
         {"name": "likes", "type": "INTEGER", "nullable": true},
         {"name": "reposts", "type": "INTEGER", "nullable": true},
         {"name": "comments", "type": "INTEGER", "nullable": true},
         {"name": "reach", "type": "INTEGER", "nullable": true},
-        {"name": "sentiment", "type": "REAL", "nullable": true}
+        {"name": "sentiment", "type": "REAL", "nullable": true},
+        {"name": "is_deleted", "type": "INTEGER", "nullable": true},
+        {"name": "deleted_at", "type": "TEXT", "nullable": true},
+        {"name": "moderation_status", "type": "TEXT", "nullable": true}
       ],
       "foreign_keys": [
         {"columns": ["run_id"], "references": {"table": "run_manifest", "columns": ["id"]}},
@@ -402,6 +409,36 @@
       "columns": [
         {"name": "follower_id", "type": "TEXT", "nullable": true},
         {"name": "following_id", "type": "TEXT", "nullable": true},
+        {"name": "run_id", "type": "TEXT", "nullable": false},
+        {"name": "since_round", "type": "INTEGER", "nullable": true}
+      ],
+      "foreign_keys": [
+        {"columns": ["run_id"], "references": {"table": "run_manifest", "columns": ["id"]}}
+      ]
+    },
+    {
+      "name": "mutes",
+      "kind": "table",
+      "scope": "run_scoped",
+      "primary_key": ["actor_id", "muted_actor_id", "run_id"],
+      "columns": [
+        {"name": "actor_id", "type": "TEXT", "nullable": false},
+        {"name": "muted_actor_id", "type": "TEXT", "nullable": false},
+        {"name": "run_id", "type": "TEXT", "nullable": false},
+        {"name": "since_round", "type": "INTEGER", "nullable": true}
+      ],
+      "foreign_keys": [
+        {"columns": ["run_id"], "references": {"table": "run_manifest", "columns": ["id"]}}
+      ]
+    },
+    {
+      "name": "blocks",
+      "kind": "table",
+      "scope": "run_scoped",
+      "primary_key": ["actor_id", "blocked_actor_id", "run_id"],
+      "columns": [
+        {"name": "actor_id", "type": "TEXT", "nullable": false},
+        {"name": "blocked_actor_id", "type": "TEXT", "nullable": false},
         {"name": "run_id", "type": "TEXT", "nullable": false},
         {"name": "since_round", "type": "INTEGER", "nullable": true}
       ],
@@ -458,6 +495,26 @@
       ],
       "foreign_keys": [
         {"columns": ["run_id"], "references": {"table": "run_manifest", "columns": ["id"]}}
+      ]
+    },
+    {
+      "name": "reports",
+      "kind": "table",
+      "scope": "run_scoped",
+      "primary_key": ["id"],
+      "columns": [
+        {"name": "id", "type": "TEXT", "nullable": false},
+        {"name": "run_id", "type": "TEXT", "nullable": false},
+        {"name": "round_num", "type": "INTEGER", "nullable": false},
+        {"name": "reporter_id", "type": "TEXT", "nullable": false},
+        {"name": "post_id", "type": "TEXT", "nullable": false},
+        {"name": "reason", "type": "TEXT", "nullable": true},
+        {"name": "created_at", "type": "TEXT", "nullable": true}
+      ],
+      "foreign_keys": [
+        {"columns": ["run_id"], "references": {"table": "run_manifest", "columns": ["id"]}},
+        {"columns": ["reporter_id"], "references": {"table": "actors", "columns": ["id"]}},
+        {"columns": ["post_id"], "references": {"table": "posts", "columns": ["id"]}}
       ]
     },
     {
@@ -687,9 +744,12 @@
     {"from": "run_manifest", "to": "community_overlap", "cardinality": "1:N", "type": "run_scope", "via": ["community_overlap.run_id"]},
     {"from": "run_manifest", "to": "posts", "cardinality": "1:N", "type": "run_scope", "via": ["posts.run_id"]},
     {"from": "run_manifest", "to": "follows", "cardinality": "1:N", "type": "run_scope", "via": ["follows.run_id"]},
+    {"from": "run_manifest", "to": "mutes", "cardinality": "1:N", "type": "run_scope", "via": ["mutes.run_id"]},
+    {"from": "run_manifest", "to": "blocks", "cardinality": "1:N", "type": "run_scope", "via": ["blocks.run_id"]},
     {"from": "run_manifest", "to": "exposures", "cardinality": "1:N", "type": "run_scope", "via": ["exposures.run_id"]},
     {"from": "run_manifest", "to": "narratives", "cardinality": "1:N", "type": "run_scope", "via": ["narratives.run_id"]},
     {"from": "run_manifest", "to": "actor_memories", "cardinality": "1:N", "type": "run_scope", "via": ["actor_memories.run_id"]},
+    {"from": "run_manifest", "to": "reports", "cardinality": "1:N", "type": "run_scope", "via": ["reports.run_id"]},
     {"from": "run_manifest", "to": "telemetry", "cardinality": "1:N", "type": "run_scope", "via": ["telemetry.run_id"]},
     {"from": "run_manifest", "to": "rounds", "cardinality": "1:N", "type": "run_scope", "via": ["rounds.run_id"]},
     {"from": "run_manifest", "to": "decision_cache", "cardinality": "1:N", "type": "run_scope", "via": ["decision_cache.run_id"]},
@@ -706,13 +766,17 @@
     {"from": "posts", "to": "post_topics", "cardinality": "1:N", "type": "post_topic", "via": ["post_topics.post_id"]},
     {"from": "actors", "to": "follows", "cardinality": "1:N", "type": "follower", "via": ["follows.follower_id"]},
     {"from": "actors", "to": "follows", "cardinality": "1:N", "type": "following", "via": ["follows.following_id"]},
+    {"from": "actors", "to": "mutes", "cardinality": "1:N", "type": "mutes", "via": ["mutes.actor_id"]},
+    {"from": "actors", "to": "blocks", "cardinality": "1:N", "type": "blocks", "via": ["blocks.actor_id"]},
     {"from": "actors", "to": "exposures", "cardinality": "1:N", "type": "viewer", "via": ["exposures.actor_id"]},
     {"from": "actors", "to": "actor_memories", "cardinality": "1:N", "type": "memory_owner", "via": ["actor_memories.actor_id"]},
     {"from": "actors", "to": "actor_interest_embeddings", "cardinality": "1:N", "type": "semantic_profile", "via": ["actor_interest_embeddings.actor_id"]},
+    {"from": "actors", "to": "reports", "cardinality": "1:N", "type": "reporter", "via": ["reports.reporter_id"]},
     {"from": "actors", "to": "search_requests", "cardinality": "1:N", "type": "actor_searches", "via": ["search_requests.actor_id"]},
     {"from": "posts", "to": "exposures", "cardinality": "1:N", "type": "exposed_post", "via": ["exposures.post_id"]},
     {"from": "posts", "to": "actor_memories", "cardinality": "1:N", "type": "memory_source_post", "via": ["actor_memories.source_post_id"]},
     {"from": "posts", "to": "post_embeddings", "cardinality": "1:N", "type": "semantic_embedding", "via": ["post_embeddings.post_id"]},
+    {"from": "posts", "to": "reports", "cardinality": "1:N", "type": "reported_post", "via": ["reports.post_id"]},
     {"from": "actors", "to": "telemetry", "cardinality": "1:N", "type": "actor_events", "via": ["telemetry.actor_id"]},
     {"from": "actors", "to": "decision_cache", "cardinality": "1:N", "type": "actor_decisions", "via": ["decision_cache.actor_id"]}
   ],
@@ -720,8 +784,8 @@
     {
       "name": "PlatformState",
       "kind": "read_model",
-      "backed_by": ["posts", "post_topics", "actors", "communities", "community_overlap", "follows", "exposures", "post_embeddings", "actor_interest_embeddings"],
-      "notes": ["Used by feed.ts, propagation.ts, events.ts, embeddings.ts, engine.ts."]
+      "backed_by": ["posts", "post_topics", "actors", "communities", "community_overlap", "follows", "mutes", "blocks", "exposures", "post_embeddings", "actor_interest_embeddings"],
+      "notes": ["Used by feed.ts, propagation.ts, events.ts, embeddings.ts, engine.ts.", "Includes derived interaction traces for trace-aware recommendation."]
     },
     {
       "name": "ActorContext",

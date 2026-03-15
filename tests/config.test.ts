@@ -58,6 +58,14 @@ describe("config.ts", () => {
       expect(config.search.maxActorsPerRound).toBe(4);
       expect(config.search.maxActorsByTier).toEqual({ A: 2, B: 2 });
       expect(config.search.maxResultsPerQuery).toBe(5);
+      expect(config.platform.name).toBe("x");
+      expect(config.platform.actions).toContain("quote");
+      expect(config.platform.tierAllowedActions.A).toContain("block");
+      expect(config.platform.recsys).toBe("hybrid");
+      expect(config.feed.algorithm).toBe("hybrid");
+      expect(config.feed.traceWeight).toBe(0.25);
+      expect(config.feed.outOfNetworkRatio).toBe(0.35);
+      expect(config.feed.diversityWeight).toBe(0.2);
 
       expect(config.propagation.viralThreshold).toBe(30);
       expect(config.fatigue.decayRate).toBe(0.05);
@@ -312,6 +320,19 @@ search:
 search:
   enabled: true
   endpoint: "localhost:8888"
+`);
+      }).toThrow(ConfigError);
+    });
+
+    it("rejects tier actions not enabled by the platform", () => {
+      expect(() => {
+        parseConfig(`
+platform:
+  actions: ["post", "idle"]
+  tierAllowedActions:
+    A: ["post", "block", "idle"]
+    B: ["post", "idle"]
+    C: ["idle"]
 `);
       }).toThrow(ConfigError);
     });

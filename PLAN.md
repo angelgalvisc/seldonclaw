@@ -1,5 +1,9 @@
 # SeldonClaw — Social Simulation Engine on CKP + DirectLLM
 
+> Current authority note:
+> this file still contains historical v1 planning sections. When specific details here conflict with the implemented runtime, treat the code as authoritative:
+> [config.ts](/Users/agc/Documents/seldonclaw/src/config.ts), [platform.ts](/Users/agc/Documents/seldonclaw/src/platform.ts), [schema.ts](/Users/agc/Documents/seldonclaw/src/schema.ts), [store.ts](/Users/agc/Documents/seldonclaw/src/store.ts), [cognition.ts](/Users/agc/Documents/seldonclaw/src/cognition.ts), [feed.ts](/Users/agc/Documents/seldonclaw/src/feed.ts), and [engine.ts](/Users/agc/Documents/seldonclaw/src/engine.ts).
+
 ## Context
 
 MiroFish (github.com/666ghj/MiroFish) is a pioneering social simulation engine with a well-designed pipeline (ontology → graph → profiles → simulation → report). However, it has limitations that hinder adoption in resource-constrained or audit-sensitive environments: dependency on Zep Cloud, OASIS as a black box for the social engine, no agent portability, hardcoded timezone, and fragmented storage.
@@ -1723,8 +1727,8 @@ with the CLI/shell phase, not before Phase 2. The core pipeline comes first.
 | **Timezone** | Hardcoded China | **Configurable IANA** |
 | **Report** | Direct LLM | **SQL metrics → structured findings → LLM narrative** |
 | **Data** | Opaque JSON blobs | **Normalized**: actor_topics, actor_beliefs, post_topics, entity_claims, community_overlap |
-| **Engagement** | Post/comment only | **6 actions**: post, comment, like, repost, follow, search |
-| **Platform** | Twitter + Reddit (superficial) | **X only** — one platform modeled deeply, not two modeled shallowly |
+| **Engagement** | Post/comment only | **Expanded action surface**: post, comment, repost, quote, like, unlike, follow, unfollow, mute, block, report, delete, search, idle |
+| **Platform** | Twitter + Reddit (superficial) | **Configurable platform policy** — X-style by default, plus forum/reddit-like/custom profiles via config |
 | **Actor memory** | Separate memory table | **Hybrid**: interaction history derived on-the-fly + persisted `actor_memories` for deliberative continuity |
 | **Actor traits** | gender, country, language in separate table | **Inline** on actors table: gender, region, language (no join overhead) |
 | **LLM SDK** | OpenAI compat (loses strict/response_format/seed) | **Anthropic native** for structured extraction |
@@ -1761,7 +1765,14 @@ NullClaw integration deferred — actors only need structured LLM completions, n
 | `interview.ts` | P2 | ✅ Phase 7 |
 | `shell.ts` | P2 | ✅ Phase 8 |
 
-**Phases 1-8 complete locally, plus Phase 9A conservative time acceleration** (`394/394` tests across 27 test files). The remaining work is no longer missing core modules; it is validation, documentation upkeep, and future iteration.
+**Phases 1-8 complete, plus Phase 9A conservative time acceleration and the Phase 10-13 foundation** (`404/404` tests across 27 test files). The runtime now includes:
+
+- expanded actions: `quote`, `unfollow`, `unlike`, `delete`, `mute`, `block`, `report`
+- deterministic platform moderation based on report thresholds
+- trace-aware / embedding / hybrid feed algorithms
+- configurable `platform` policy with `tierAllowedActions`
+
+The remaining work is refinement: richer moderation semantics, deeper platform profiles, stronger live validation, and future execution scaling.
 
 ## Phase 9 — Time Acceleration
 
