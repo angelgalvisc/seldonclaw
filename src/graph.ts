@@ -428,13 +428,27 @@ function guessEntityType(
       if (knownTypes.has("government_body") && (lower.includes("ministerio") || lower.includes("congreso"))) return "government_body";
       if (knownTypes.has("media_outlet") && (lower.includes("radio") || lower.includes("tv"))) return "media_outlet";
       if (knownTypes.has("organization")) return "organization";
-      return "organization";
+      return resolveFallbackEntityType(knownTypes);
     }
   }
 
   // Default to person (most common entity in social scenarios)
   if (knownTypes.has("person")) return "person";
-  return "entity";
+  return resolveFallbackEntityType(knownTypes);
+}
+
+function resolveFallbackEntityType(knownTypes: Set<string>): string {
+  const preferred = [
+    "person",
+    "organization",
+    "institution",
+    "entity",
+  ];
+  for (const candidate of preferred) {
+    if (knownTypes.has(candidate)) return candidate;
+  }
+  const first = knownTypes.values().next();
+  return first.done ? "person" : first.value;
 }
 
 /**

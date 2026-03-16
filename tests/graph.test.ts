@@ -399,6 +399,40 @@ describe("buildKnowledgeGraph", () => {
     expect(aliases.length).toBeGreaterThan(0);
   });
 
+  it("falls back to a known entity type when heuristics infer an unknown one", async () => {
+    const fallbackStore = new SQLiteGraphStore(":memory:");
+    const result = ingestDocument(
+      fallbackStore,
+      "nemo.md",
+      "NVIDIA presentó NemoClaw. Radio Capital cubrió la noticia y traders debatieron su efecto en Bitcoin.",
+      { minChunkChars: 20 }
+    );
+    const chunks = fallbackStore.getChunksByDocument(result.documentId);
+
+    fallbackStore.addEntityType({ name: "person", description: "A named individual" });
+    fallbackStore.addEntityType({ name: "media_outlet", description: "A media organization" });
+    fallbackStore.addClaim({
+      id: "",
+      source_chunk_id: chunks[0].id,
+      subject: "Radio Capital",
+      predicate: "cubre",
+      object: "NemoClaw",
+      confidence: 0.9,
+      observed_at: new Date().toISOString(),
+      topics: JSON.stringify(["ai", "bitcoin"]),
+    });
+
+    await expect(buildKnowledgeGraph(fallbackStore, llm)).resolves.toBeDefined();
+
+    const entities = fallbackStore.db
+      .prepare("SELECT name, type FROM entities WHERE merged_into IS NULL ORDER BY name")
+      .all() as Array<{ name: string; type: string }>;
+    expect(entities.some((entity) => entity.name === "Radio Capital")).toBe(true);
+    expect(entities.map((entity) => entity.type)).toContain("person");
+
+    fallbackStore.close();
+  });
+
   it("no obvious duplicates remain after dedup", async () => {
     await buildKnowledgeGraph(store, llm, {
       similarityThreshold: 0.6,
