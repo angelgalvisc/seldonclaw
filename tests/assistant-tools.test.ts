@@ -233,4 +233,30 @@ describe("assistant-tools hardening", () => {
 
     releaseActiveRunLock(fixture.workspace, "other-run");
   });
+
+  it("materializes source docs from the operator brief when no docs path is provided", async () => {
+    const fixture = createRuntimeFixture();
+
+    const result = await executeAssistantTool(
+      "design_simulation",
+      {
+        brief: [
+          "Diseña una simulación nueva para evaluar el efecto de NemoClaw en Bitcoin.",
+          "Fuente principal: https://es.wired.com/articulos/nvidia-lanzara-una-plataforma-de-agentes-de-ia-de-codigo-abierto",
+          "Objetivo: medir si el efecto es material o solo ruido narrativo.",
+        ].join("\n"),
+      },
+      fixture.runtime
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.details).toContain("Source docs:");
+
+    const taskState = fixture.getTaskState();
+    expect(taskState.activeDesign?.docsPath).toBeTruthy();
+    expect(taskState.activeDesign?.docsPath).toContain("/docs");
+
+    const runResult = await executeAssistantTool("run_simulation", {}, fixture.runtime);
+    expect(runResult.status).toBe("needs_confirmation");
+  });
 });

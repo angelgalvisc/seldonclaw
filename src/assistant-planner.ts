@@ -45,6 +45,11 @@ export async function planAssistantStep(
   llm: LLMClient,
   input: AssistantPlannerInput
 ): Promise<AssistantPlannerDecision> {
+  const heuristic = detectHeuristicPlannerDecision(input);
+  if (heuristic) {
+    return heuristic;
+  }
+
   const prompt = buildPlannerPrompt(input);
   const system = buildPlannerSystemPrompt();
   const attempts: AssistantPlannerMeta[] = [];
@@ -214,6 +219,77 @@ function parsePlannerJson(raw: string): PlannerJson | null {
     }
   }
   return null;
+}
+
+function detectHeuristicPlannerDecision(
+  input: AssistantPlannerInput
+): AssistantPlannerDecision | null {
+  const normalized = input.userInput.trim();
+  if (!normalized) return null;
+
+  const lower = normalized.toLowerCase();
+  const looksLikeDesignRequest =
+    /\b(diseña|diseñala|diseñalo|rediseña|rediseñala|design|redesign|create a simulation)\b/i.test(
+      normalized
+    ) ||
+    (/\breemplaza\b/i.test(normalized) && /\bsimulaci[oó]n\b/i.test(normalized));
+
+  const hasStructuredBrief =
+    /(^|\n)\s*(t[ií]tulo|objetivo|evento inicial|regla cr[ií]tica|actores clave|configuraci[oó]n|fecha focal|tipo de simulaci[oó]n|quiero observar|fuente principal)\s*:/i.test(
+      normalized
+    ) ||
+    (normalized.includes("http://") || normalized.includes("https://")) ||
+    normalized.length >= 500;
+
+  if (looksLikeDesignRequest && hasStructuredBrief) {
+    return {
+      kind: "tool_call",
+      tool: "design_simulation",
+      arguments: {
+        brief: normalized,
+        ...(extractDocsPath(normalized) ? { docsPath: extractDocsPath(normalized) } : {}),
+      },
+      meta: {
+        costUsd: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        model: "heuristic",
+      },
+    };
+  }
+
+  const looksLikeRunRequest =
+    /\b(correr|ejec[uú]tala|ejecutala|run it|run now|ejec[uú]talo|confirmed?|confirmo)\b/i.test(
+      lower
+    ) ||
+    /^(y|yes|sí|si|run|confirm)$/i.test(normalized);
+  if (
+    looksLikeRunRequest &&
+    /\b(Status:\s*awaiting_confirmation|Pending run:)\b/i.test(input.currentTaskSummary)
+  ) {
+    return {
+      kind: "tool_call",
+      tool: "run_simulation",
+      arguments: { confirmed: true },
+      meta: {
+        costUsd: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        model: "heuristic",
+      },
+    };
+  }
+
+  return null;
+}
+
+function extractDocsPath(input: string): string | null {
+  const match = input.match(
+    /(?:^|\n)\s*(?:contexto documental|documents path|documentos fuente|docspath)\s*:\s*([^\n]+)/i
+  );
+  if (!match) return null;
+  const candidate = match[1]?.trim();
+  return candidate ? candidate : null;
 }
 
 function plannerJsonCandidates(raw: string): string[] {

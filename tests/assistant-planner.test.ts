@@ -123,4 +123,37 @@ describe("assistant-planner.ts", () => {
       expect(decision.arguments.confirmed).toBe(true);
     }
   });
+
+  it("routes a structured Spanish brief to design_simulation without relying on the model", async () => {
+    const llm = new MockLLMClient();
+
+    const decision = await planAssistantStep(llm, {
+      contextSummary: "Operator identity: PublicMachina.",
+      currentTaskSummary: "- Status: designed\n- Active design: Global Product Recall Response",
+      conversation: [],
+      userInput: [
+        "Diseña una simulación nueva desde cero y reemplaza cualquier simulación anterior.",
+        "",
+        "Título:",
+        "Impacto narrativo de la noticia de NemoClaw de NVIDIA en Bitcoin",
+        "",
+        "Fuente principal:",
+        "https://es.wired.com/articulos/nvidia-lanzara-una-plataforma-de-agentes-de-ia-de-codigo-abierto",
+        "",
+        "Contexto documental:",
+        "./inputs/nemoclaw-btc",
+        "",
+        "Objetivo:",
+        "Evaluar si la noticia puede mover de forma material el precio de Bitcoin.",
+      ].join("\n"),
+      tools: ASSISTANT_TOOLS,
+    });
+
+    expect(decision.kind).toBe("tool_call");
+    if (decision.kind === "tool_call") {
+      expect(decision.tool).toBe("design_simulation");
+      expect(decision.arguments.docsPath).toBe("./inputs/nemoclaw-btc");
+      expect(decision.meta.model).toBe("heuristic");
+    }
+  });
 });

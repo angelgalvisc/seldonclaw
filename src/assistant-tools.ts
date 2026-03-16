@@ -2,8 +2,8 @@
  * assistant-tools.ts — Typed tools for the PublicMachina operator planner.
  */
 
-import { writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { SQLiteGraphStore, uuid } from "./db.js";
 import type { SimConfig } from "./config.js";
 import { loadConfig } from "./config.js";
@@ -244,12 +244,29 @@ async function designSimulationTool(
     workspace: runtime.workspace,
   });
 
+  const docsPath =
+    result.spec.docsPath ??
+    materializeBriefSourceDocs(runtime.workspace, {
+      title: result.spec.title,
+      brief,
+      objective: result.spec.objective,
+      hypothesis: result.spec.hypothesis,
+      artifactDir: result.historyRecord?.workspaceDir ?? result.artifactDir,
+    });
+
+  if (docsPath !== result.spec.docsPath) {
+    persistDesignedDocsPath(result.specPath, docsPath);
+    if (result.historyRecord) {
+      updateSimulationHistoryRecord(runtime.workspace, result.historyRecord.id, { docsPath });
+    }
+  }
+
   const designState: DesignedSimulationState = {
     title: result.spec.title,
     brief,
     objective: result.spec.objective,
     hypothesis: result.spec.hypothesis,
-    docsPath: result.spec.docsPath,
+    docsPath,
     specPath: result.specPath,
     configPath: result.configPath,
     historyRecordId: result.historyRecord?.id ?? null,
@@ -265,6 +282,7 @@ async function designSimulationTool(
       result.preview.trim(),
       `Spec: ${result.specPath}`,
       `Config: ${result.configPath}`,
+      `Source docs: ${docsPath}`,
       `Next step available: run_simulation`,
     ].join("\n"),
   };
@@ -859,6 +877,54 @@ function stringifyArg(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function materializeBriefSourceDocs(
+  workspace: AssistantWorkspaceLayout,
+  input: {
+    title: string;
+    brief: string;
+    objective: string | null;
+    hypothesis: string | null;
+    artifactDir: string;
+  }
+): string {
+  const docsDir = ensureWorkspaceOutputDir(
+    workspace,
+    "simulations",
+    basename(input.artifactDir),
+    "docs"
+  );
+  const filePath = join(docsDir, "operator-brief.md");
+  const urls = [...input.brief.matchAll(/https?:\/\/\S+/g)].map((match) => match[0]);
+  const sections = [
+    `# ${input.title}`,
+    "",
+    "## Objective",
+    input.objective ?? "Not specified.",
+    "",
+    "## Hypothesis",
+    input.hypothesis ?? "Not specified.",
+    "",
+    "## Operator Brief",
+    input.brief.trim(),
+  ];
+  if (urls.length > 0) {
+    sections.push("", "## Referenced URLs", ...urls.map((url) => `- ${url}`));
+  }
+  writeFileSync(filePath, `${sections.join("\n")}\n`, "utf-8");
+  return docsDir;
+}
+
+function persistDesignedDocsPath(specPath: string, docsPath: string): void {
+  if (!existsSync(specPath)) return;
+  try {
+    const spec = JSON.parse(readFileSync(specPath, "utf-8")) as { docsPath?: unknown };
+    spec.docsPath = docsPath;
+    writeFileSync(specPath, `${JSON.stringify(spec, null, 2)}\n`, "utf-8");
+  } catch {
+    // Ignore malformed specs here; the in-memory task state still carries the correct docsPath.
+  }
 }
 
 function normalizeProviderRole(value: string | null): ProviderRole | null {
