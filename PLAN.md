@@ -18,14 +18,14 @@ MiroFish (github.com/666ghj/MiroFish) is a pioneering social simulation engine w
 |---|---|---|
 | Language | **TypeScript** | Native CKP SDK, fast iteration, auditable |
 | Storage | **1 SQLite file** behind `GraphStore` interface | Zero cloud, Pi 4 viable, FTS5 + optional embedding cache. Interface allows swapping storage |
-| Cognition backend | **DirectLLMBackend** (default), not tied to any external runtime | Calls llm.ts directly. `CognitionBackend` remains swappable in principle, but no NullClaw runtime is wired today |
+| Cognition backend | **DirectLLMBackend** (default), not tied to any external runtime | Calls llm.ts directly. `CognitionBackend` remains swappable in principle, but no External runtime runtime is wired today |
 | Actors | **ActorSpec + ActorState** separated | Spec = portable contract (CKP). State = beliefs/stance/fatigue (simulation) |
 | Cognition | **3 layers**: CognitionRouter + DecisionPolicy + CognitionBackend | Router decides tier. Policy decides rules. Backend executes. Clean separation |
 | Social engine | **Explicit standalone module** | activation, feed, propagation, fatigue, events — not CKP Swarm |
 | CKP | **Actor export/import contract**, not the engine core | Portability = structure (claw.yaml) + state (bundle). Does not replace social engine |
 | Graph | **Temporal with provenance + entity resolution P0** | documents→chunks→claims + dedup + merge + alias resolution |
 | LLM SDK | **Anthropic native** for critical structured extraction | OpenAI compat ignores strict/response_format/seed. Native for ontology/profiles/report |
-| Conformance | **CKP schema validation on archetypes** | L3 on NullClaw Bridge (externally validated), not on own integration |
+| Conformance | **CKP schema validation on archetypes** | L3 on External runtime Bridge (externally validated), not on own integration |
 | Reproducibility | **seed + decision_cache + snapshots + run_manifest** | seed controls local PRNG; decision_cache records LLM responses for exact replay |
 | Report | **Normalized tables only → findings → LLM narrative** | Policy: reports never read JSON blobs directly |
 | Security | **Secrets never in persistent data** | config_snapshot sanitized, telemetry redacted, export bundles scrubbed. Pairing on by default |
@@ -1062,23 +1062,23 @@ interface CognitionBackend {
 //   DirectLLMBackend — calls llm.ts directly (default)
 //   RecordedBackend  — replay from decision_cache
 //   MockBackend      — tests without LLM
-//   NullClawBackend  — HTTP gateway loopback (optional)
+//   ExternalRuntimeBackend  — HTTP gateway loopback (optional)
 //   RemoteCKPBackend — v2: any CKP conformant runtime
 ```
 
-**Rule:** engine.ts never imports DirectLLMBackend or NullClaw directly. It only knows `CognitionBackend`.
+**Rule:** engine.ts never imports DirectLLMBackend or External runtime directly. It only knows `CognitionBackend`.
 
 **Cost impact:**
 With 100 actors, 72 rounds, ~20 active/round:
 - Without tiers: 20 × 72 = 1,440 LLM calls
 - With tiers (5A + 10B@30% + 5C): (5 + 3 + 0) × 72 = 576 LLM calls → **60% savings**
 
-## NullClawBackend (nullclaw-worker.ts) — Optional
+## ExternalRuntimeBackend (external-runtime-worker.ts) — Optional
 
-Concrete implementation of `CognitionBackend` via NullClaw HTTP gateway.
-**Optional alternative to DirectLLMBackend.** Uses ONLY documented NullClaw endpoints.
+Concrete implementation of `CognitionBackend` via External runtime HTTP gateway.
+**Optional alternative to DirectLLMBackend.** Uses ONLY documented External runtime endpoints.
 
-**Documented NullClaw Gateway API:**
+**Documented External runtime Gateway API:**
 - `GET /health` — health check
 - `POST /pair` — pairing
 - `POST /webhook` — webhook messages
@@ -1087,12 +1087,12 @@ Concrete implementation of `CognitionBackend` via NullClaw HTTP gateway.
 **Do NOT exist:** `/v1/decide`, `/v1/interview`. Never invent endpoints.
 
 ```typescript
-class NullClawBackend implements CognitionBackend {
+class ExternalRuntimeBackend implements CognitionBackend {
   private gatewayUrl: string;  // default: http://localhost:3000
   private authToken?: string;  // pairing token — NEVER logged, NEVER in telemetry/run_manifest
 
   async start(): Promise<void> {
-    // Spawn NullClaw gateway process if not running
+    // Spawn External runtime gateway process if not running
     // GET /health to verify
     // If pairing.enabled: POST /pair → store token in memory only
   }
@@ -1128,12 +1128,12 @@ class NullClawBackend implements CognitionBackend {
 }
 ```
 
-### NullClawAdapter — Local shim contract
+### ExternalRuntimeAdapter — Local shim contract
 
 ```typescript
-// Translates between PublicMachina's DecisionRequest/Response and NullClaw's A2A format
+// Translates between PublicMachina's DecisionRequest/Response and External runtime's A2A format
 
-interface NullClawAdapter {
+interface ExternalRuntimeAdapter {
   // PublicMachina → A2A
   toDecisionMessage(request: DecisionRequest): A2ADecisionMessage;
   toInterviewMessage(actorContext: string, question: string): A2AInterviewMessage;
@@ -1143,7 +1143,7 @@ interface NullClawAdapter {
   extractInterviewResponse(result: A2AMessageResult): string;
 }
 
-// Uses message/send (documented in NullClaw Gateway API)
+// Uses message/send (documented in External runtime Gateway API)
 // NOT "tasks/send" — it's a message, not a protocol task
 interface A2ADecisionMessage {
   jsonrpc: "2.0";
@@ -1178,30 +1178,30 @@ type A2AInterviewMessage = Omit<A2ADecisionMessage, 'params'> & {
   };
 };
 
-// If NullClaw POST /a2a does not support this flow directly,
+// If External runtime POST /a2a does not support this flow directly,
 // the adapter can alternatively use POST /webhook with a
-// message format that NullClaw processes.
-// The key point: PublicMachina never invents endpoints that NullClaw doesn't have.
+// message format that External runtime processes.
+// The key point: PublicMachina never invents endpoints that External runtime doesn't have.
 ```
 
-**Policy:** PublicMachina never invents NullClaw endpoints. If `/a2a` doesn't support the flow, use `/webhook` as fallback or contribute to the upstream gateway.
+**Policy:** PublicMachina never invents External runtime endpoints. If `/a2a` doesn't support the flow, use `/webhook` as fallback or contribute to the upstream gateway.
 
-### Operational NullClaw Configuration (nullclaw-worker.ts)
+### Operational External runtime Configuration (external-runtime-worker.ts)
 
-PublicMachina needs to configure NullClaw with the correct LLM provider. Mechanism:
+PublicMachina needs to configure External runtime with the correct LLM provider. Mechanism:
 
 ```typescript
-async function bootstrapNullClaw(config: NullClawConfig): Promise<void> {
-  // 1. Generate NullClaw config if autoStart=true
+async function bootstrapExternalRuntime(config: ExternalRuntimeConfig): Promise<void> {
+  // 1. Generate External runtime config if autoStart=true
   //    Options (determined during Milestone 0 spike):
   //    A: CLI args → spawn(binary, ['--config', configPath])
   //    B: env vars → ANTHROPIC_API_KEY, NULLCLAW_PORT
-  //    C: Pre-configured profile that NullClaw already knows
+  //    C: Pre-configured profile that External runtime already knows
   //
   // 2. Pass upstream provider (model + API key via env)
-  //    NullClaw needs to know which LLM to use for completions
+  //    External runtime needs to know which LLM to use for completions
   //
-  // 3. Spawn NullClaw gateway
+  // 3. Spawn External runtime gateway
   //
   // 4. Wait for GET /health → 200
   //
@@ -1217,7 +1217,7 @@ For exact replay of Tier A/B:
 1. Serializes `DecisionRequest` → SHA-256 hash
 2. Looks up in `decision_cache` by `(request_hash, model_id, prompt_version)`
 3. If found → returns `parsed_decision` (no LLM call, no network)
-4. If not found → error or fallback to NullClawBackend
+4. If not found → error or fallback to ExternalRuntimeBackend
 
 **Why `prompt_version` in the lookup key:** The request hash covers the actor context and feed, but NOT the prompt template that wraps them. If you change the system prompt without changing the request payload, the hash stays the same but the LLM would produce a different response. Including `prompt_version` prevents silent replay of stale decisions after prompt changes.
 
@@ -1301,7 +1301,7 @@ function buildSimContext(
 1. `CognitionRouter` determines tier (A/B/C)
 2. **Tier C:** `DecisionPolicy.applyRules()` — deterministic, no backend, no I/O
 3. **Tier A/B:** Engine builds `DecisionRequest`, passes it to the active `CognitionBackend`
-   - Normal run: `NullClawBackend` → LLM via gateway → caches in `decision_cache`
+   - Normal run: `ExternalRuntimeBackend` → LLM via gateway → caches in `decision_cache`
    - Replay: `RecordedBackend` → looks up in cache → 0 LLM calls
 4. Engine executes the action on platform state (SQLite via GraphStore)
 5. Telemetry logs: tier, backend, cache hit, tokens, cost
@@ -1334,7 +1334,7 @@ but it will not behave identically (different LLM, different context, different 
 ```
 Layer 1: Portable contract (CKP)      Layer 2: Exportable state            Layer 3: Runtime adapter
 ┌──────────────────────┐               ┌─────────────────────┐           ┌───────────────────┐
-│ claw.yaml            │               │ actor_state.json    │           │ NullClawBackend   │
+│ claw.yaml            │               │ actor_state.json    │           │ ExternalRuntimeBackend   │
 │ identity             │               │ beliefs.json        │           │ RemoteCKPBackend  │
 │ tools                │               │ topics.json         │           │ RecordedBackend   │
 │ policies             │               │ provenance.json     │           │ MockBackend       │
@@ -1525,26 +1525,26 @@ providers:
     sdk: "anthropic"
     model: "claude-sonnet-4-20250514"
     apiKeyEnv: "ANTHROPIC_API_KEY"
-  simulation:                    # Upstream provider that NullClaw uses for LLM calls
-    model: "claude-haiku-4-20250414"   # NullClaw makes the LLM call, not PublicMachina
-    apiKeyEnv: "ANTHROPIC_API_KEY"     # passed to NullClaw via env or config
+  simulation:                    # Upstream provider that External runtime uses for LLM calls
+    model: "claude-haiku-4-20250414"   # External runtime makes the LLM call, not PublicMachina
+    apiKeyEnv: "ANTHROPIC_API_KEY"     # passed to External runtime via env or config
   report:                        # For report — NATIVE SDK
     sdk: "anthropic"
     model: "claude-sonnet-4-20250514"
     apiKeyEnv: "ANTHROPIC_API_KEY"
 
-nullclaw:
-  gatewayUrl: "http://localhost:3000"   # NullClaw gateway default port (doc: 3000)
-  binary: "nullclaw"                    # path to binary (if PublicMachina spawns it)
+external-runtime:
+  gatewayUrl: "http://localhost:3000"   # External runtime gateway default port (doc: 3000)
+  binary: "external-runtime"                    # path to binary (if PublicMachina spawns it)
   autoStart: true                       # auto-spawn if not running
-  upstreamProvider: "simulation"        # which LLM provider NullClaw uses
+  upstreamProvider: "simulation"        # which LLM provider External runtime uses
   pairing:
     enabled: true                       # DEFAULT: pairing active (secure by default)
                                         # Disable ONLY for confirmed loopback-only (127.0.0.1)
-                                        # NullClaw security guide recommends active pairing
+                                        # External runtime security guide recommends active pairing
                                         # for any non-loopback connection.
     token: ""                           # pairing token (auto-generated if empty, never logged)
-  agentProfile:                         # PublicMachina agent identity for NullClaw
+  agentProfile:                         # PublicMachina agent identity for External runtime
     name: "publicmachina-worker"
     capabilities: ["decide", "interview"]
 
@@ -1609,7 +1609,7 @@ publicmachina doctor                                            # validate insta
 publicmachina config show                                       # print sanitized current config
 publicmachina config set output.dir ./output                    # update a config field
 publicmachina inspect --db simulation.db --actor "journalist-01"     # view actor state
-publicmachina interview --db simulation.db --actor "journalist-01"   # interview via NullClaw
+publicmachina interview --db simulation.db --actor "journalist-01"   # interview via External runtime
 publicmachina export --db simulation.db --actor "journalist-01"      # export concrete claw.yaml
 publicmachina stats --db simulation.db                               # simulation metrics
 publicmachina stats --db simulation.db --tiers                       # breakdown by cognition tier
@@ -1691,7 +1691,7 @@ with the CLI/shell phase, not before Phase 2. The core pipeline comes first.
     "yaml": "^2.4.0"
   },
   // openai SDK removed in v1: all structured extraction uses native @anthropic-ai/sdk
-  // NullClaw manages its own LLM client internally
+  // External runtime manages its own LLM client internally
   // If v2 needs non-Anthropic providers, add it then
   "devDependencies": {
     "typescript": "^5.5.0",
@@ -1701,14 +1701,14 @@ with the CLI/shell phase, not before Phase 2. The core pipeline comes first.
 }
 ```
 
-**5 runtime dependencies.** Compact. (`openai` removed: all extraction uses native `@anthropic-ai/sdk`; NullClaw manages its own LLM client.)
+**5 runtime dependencies.** Compact. (`openai` removed: all extraction uses native `@anthropic-ai/sdk`; External runtime manages its own LLM client.)
 
 ## Conformance
 
 | Target | Level | When | Note |
 |---|---|---|---|
-| NullClaw Bridge | L3 (31/31) | Externally validated by NullClaw | PublicMachina does **not** re-validate L3; trusts the published conformant bridge |
-| publicmachina→nullclaw integration | **Integration tests** | On PublicMachina startup | GET /health, POST /pair (if applicable), round-trip /a2a with DecisionMessage + InterviewMessage |
+| External runtime Bridge | L3 (31/31) | Externally validated by External runtime | PublicMachina does **not** re-validate L3; trusts the published conformant bridge |
+| publicmachina→external-runtime integration | **Integration tests** | On PublicMachina startup | GET /health, POST /pair (if applicable), round-trip /a2a with DecisionMessage + InterviewMessage |
 | Archetype manifests (4) | CKP JSON Schema | On generation, via `@clawkernel/sdk` | Validates structure, not runtime |
 | Concrete exports | L1 (13/13) | Only when exporting an actor as a real CKP agent | Optional, on demand |
 
@@ -1742,8 +1742,8 @@ with the CLI/shell phase, not before Phase 2. The core pipeline comes first.
 
 ## MVP (Phase 1)
 
-**Architecture decision:** NullClaw spike skipped. DirectLLMBackend chosen (see IMPLEMENTATION_HISTORY.md Phase 0).
-NullClaw integration deferred — actors only need structured LLM completions, not agent capabilities.
+**Architecture decision:** External runtime spike skipped. DirectLLMBackend chosen (see IMPLEMENTATION_HISTORY.md Phase 0).
+External runtime integration deferred — actors only need structured LLM completions, not agent capabilities.
 
 **MVP Scope:** End-to-end pipeline with 10-20 actors, 5 rounds, X (formerly Twitter) only.
 
@@ -1851,7 +1851,7 @@ Phase 2: LLM on structured findings → narrative
   → 1 LLM call, not iterative
 
 Phase 3 (P2): Optional interviews for deeper insight
-  - If the report identifies interesting actors → interview via NullClaw
+  - If the report identifies interesting actors → interview via External runtime
   - Swarm only here (interview.ts)
 ```
 
@@ -1918,7 +1918,7 @@ publicmachina doctor
 interface ShellContext {
   db: GraphStore;                    // read-only SQL access to simulation data
   runId: string;                     // active run to query
-  backend: CognitionBackend;         // for actor interviews (NullClaw or RecordedBackend)
+  backend: CognitionBackend;         // for actor interviews (External runtime or RecordedBackend)
   llm: LLMClient;                   // report provider — translates NL → SQL + interprets results
   schema: TableSchema[];             // normalized table definitions (fed to LLM as context)
 }
@@ -2265,7 +2265,7 @@ publicmachina run \
     - Interview mode enters/exits cleanly, actor responds coherently
     - Shell never executes write operations without explicit confirmation
     - No secrets appear in shell output
-11. **NullClaw integration test:**
+11. **External runtime integration test:**
     - `GET /health` → 200 OK (gateway alive)
     - Pairing/token if applicable (POST /pair)
     - Round-trip A2A: `POST /a2a` with DecisionMessage → parseable response

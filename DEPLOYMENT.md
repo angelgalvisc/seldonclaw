@@ -207,7 +207,7 @@ Before calling an environment production-ready, validate:
 This document does not describe:
 
 - a mandatory gateway runtime
-- an active NullClaw deployment path
+- an active External runtime deployment path
 - historical experimental backends
 
 Those are not part of the active PublicMachina product surface.

@@ -322,12 +322,14 @@ Documents ──→ Ingest ──→ Knowledge Graph ──→ Ontology ──�
 | `ingest.ts` | Document ingestion → chunks → claims (provenance chain) | ~435 |
 | `graph.ts` | Entity resolution, merge candidates, confidence scoring | ~540 |
 | `llm.ts` | Multi-provider runtime client (Anthropic, OpenAI, Moonshot) + `MockLLMClient` | ~405 |
+| `model-catalog.ts` | Curated provider/model presets, aliases, and display metadata for onboarding and `/model` | ~149 |
 | `provider-selection.ts` | Provider/model normalization, resolution, and global/role-specific switching helpers | ~268 |
 | `report.ts` | SQL → metrics + optional LLM narrative | ~200 |
 | `interview.ts` | Actor interview flow (single-turn and multi-turn) | ~200 |
 | `ckp.ts` | CKP export/import with secret scrubbing and lived-experience bundle capture | ~718 |
 | `shell.ts` | Conversational REPL: NL→SQL, interviews, schema inspection, and live provider/model switching | ~515 |
 | `config.ts` | YAML config parsing, validation, platform policy normalization, and secret sanitization | ~812 |
+| `env.ts` | Lightweight `.env` loading and in-place API key persistence for setup | ~58 |
 | `telemetry.ts` | Round-level metrics persistence (tier calls, timing) | ~155 |
 | `types.ts` | Domain types: rows, snapshots, DTOs, platform/runtime projections | ~537 |
 | `ids.ts` | UUID generation + deterministic SHA-256 stable IDs | ~30 |

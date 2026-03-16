@@ -24,14 +24,14 @@ Start each session with:
 
 ---
 
-## Phase 0: Spike — NullClaw round-trip ⏭️ SKIPPED
+## Phase 0: Spike — External runtime round-trip ⏭️ SKIPPED
 
-**Decision:** NullClaw integration deferred. DirectLLMBackend chosen instead.
-NullClaw (96K LOC Zig binary, 678KB) provides agent capabilities (tools, channels, sandbox, memory)
+**Decision:** External runtime integration deferred. DirectLLMBackend chosen instead.
+External runtime (96K LOC Zig binary, 678KB) provides agent capabilities (tools, channels, sandbox, memory)
 that PublicMachina actors don't need — actors only require structured LLM completions.
 DirectLLMBackend calls llm.ts directly: zero external process, zero HTTP overhead, same TypeScript stack.
 CKP compatibility preserved via `@clawkernel/sdk` (actor export/import contract).
-CognitionBackend interface allows future NullClaw swap if agent capabilities become needed.
+CognitionBackend interface allows future External runtime swap if agent capabilities become needed.
 
 ---
 
@@ -200,12 +200,12 @@ Each step feeds the next. Strict order.
 
 ## Phase 3: Cognition Layer (3 days) ✅ COMPLETE
 
-**Architecture decision:** NullClaw replaced with DirectLLMBackend.
-NullClaw (96K LOC Zig binary) was evaluated as over-engineering for PublicMachina's needs.
+**Architecture decision:** External runtime replaced with DirectLLMBackend.
+External runtime (96K LOC Zig binary) was evaluated as over-engineering for PublicMachina's needs.
 Actor decisions only require structured LLM completions — not agent capabilities (tools, channels, sandbox).
 DirectLLMBackend calls llm.ts directly, zero external process dependency.
 CKP compatibility preserved via `@clawkernel/sdk` (actor export/import, A2A message types).
-`CognitionBackend` remains swappable in principle, but no NullClaw runtime is wired in the active product.
+`CognitionBackend` remains swappable in principle, but no External runtime runtime is wired in the active product.
 
 ### Step 3.1: cognition.ts ✅
 
@@ -512,7 +512,7 @@ These are the non-negotiable contracts. If implementation deviates, update PLAN.
 | RoundContext | PLAN.md lines 738-755 | Uses `activeEvents` (not `events`), no full SimConfig |
 | PRNG everywhere | PLAN.md lines 851, 1009, 1035 | `round.rng.next()`, never `Math.random()` |
 | decision_cache lookup | PLAN.md lines 1200-1210 | Key = `(request_hash, model_id, prompt_version)` |
-| NullClaw endpoints | PLAN.md lines 1067-1073 | ONLY `/health`, `/pair`, `/webhook`, `/a2a`. Never invent endpoints |
+| External runtime endpoints | PLAN.md lines 1067-1073 | ONLY `/health`, `/pair`, `/webhook`, `/a2a`. Never invent endpoints |
 | Report policy | PLAN.md lines 1700-1703 | Reports ONLY read normalized tables. No JSON blobs |
 | Security | PLAN.md lines 29, DEPLOYMENT.md | Secrets never in persistent data. sanitize/redact/scrub |
 | Pairing default | PLAN.md line 1518 | `enabled: true` — secure by default |

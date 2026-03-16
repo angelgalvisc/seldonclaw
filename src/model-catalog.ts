@@ -130,9 +130,8 @@ export function resolveModelPreset(
 }
 
 export function normalizeModelId(provider: SupportedProvider, input: string): string {
-  return resolveModelPreset(provider, input)?.persistedId
-    ?? resolveModelPreset(provider, input)?.id
-    ?? input.trim();
+  const preset = resolveModelPreset(provider, input);
+  return preset?.persistedId ?? preset?.id ?? input.trim();
 }
 
 export function describeConfiguredModel(provider: SupportedProvider, modelId: string): string {

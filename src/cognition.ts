@@ -244,7 +244,7 @@ export interface DirectLLMConfig {
 
 /**
  * CognitionBackend that calls llm.ts directly for Tier A/B decisions.
- * No NullClaw dependency — uses Anthropic SDK through LLMClient.
+ * No external agent runtime dependency — routes decisions through the configured LLM provider adapters.
  *
  * CKP alignment:
  *   - Decision messages structured as CKP-compatible content blocks
