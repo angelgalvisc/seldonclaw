@@ -227,14 +227,23 @@ export async function startAssistantOperator(
     let responded = false;
 
     for (let step = 0; step < 4; step += 1) {
-      const decision = await planAssistantStep(plannerLlm, {
-        contextSummary: assistantContext.summary,
-        currentTaskSummary: summarizeTaskState(taskState),
-        conversation,
-        userInput: input,
-        tools: ASSISTANT_TOOLS,
-        toolTrace,
-      });
+      let decision;
+      try {
+        decision = await planAssistantStep(plannerLlm, {
+          contextSummary: assistantContext.summary,
+          currentTaskSummary: summarizeTaskState(taskState),
+          conversation,
+          userInput: input,
+          tools: ASSISTANT_TOOLS,
+          toolTrace,
+        });
+      } catch (err) {
+        const message = `I hit a planner error and kept the session alive. Please try again in simpler words. (${err instanceof Error ? err.message : String(err)})`;
+        io.stderr(`${message}\n`);
+        recordAssistantMessage(session, conversation, "assistant", message);
+        responded = true;
+        break;
+      }
 
       if (decision.kind === "respond") {
         runtime.updateTaskState(addSessionUsage(workspace, {

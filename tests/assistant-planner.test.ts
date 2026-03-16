@@ -56,4 +56,71 @@ describe("assistant-planner.ts", () => {
       expect(decision.message).toContain("design");
     }
   });
+
+  it("retries once when the first planner JSON response is invalid", async () => {
+    const llm = new MockLLMClient();
+    let calls = 0;
+    llm.complete = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          content: '{"kind":"tool_call","tool":"design_simulation","arguments":{"brief":"Rediseña',
+          model: "mock-model",
+          inputTokens: 10,
+          outputTokens: 10,
+          costUsd: 1,
+          durationMs: 1,
+        };
+      }
+      return {
+        content: JSON.stringify({
+          kind: "tool_call",
+          tool: "design_simulation",
+          arguments: { brief: "Rediseña la simulación con el nuevo contexto." },
+        }),
+        model: "mock-model",
+        inputTokens: 10,
+        outputTokens: 10,
+        costUsd: 2,
+        durationMs: 1,
+      };
+    };
+
+    const decision = await planAssistantStep(llm, {
+      contextSummary: "Operator identity: PublicMachina.",
+      currentTaskSummary: "- Status: designed",
+      conversation: [],
+      userInput: "Rediseñala con ese contexto",
+      tools: ASSISTANT_TOOLS,
+    });
+
+    expect(calls).toBe(2);
+    expect(decision.kind).toBe("tool_call");
+    if (decision.kind === "tool_call") {
+      expect(decision.tool).toBe("design_simulation");
+      expect(decision.meta.costUsd).toBe(3);
+    }
+  });
+
+  it("extracts JSON when the model wraps it in prose", async () => {
+    const llm = new MockLLMClient();
+    llm.setResponse(
+      "Latest user input:\nRun it now",
+      'Sure — here is the decision:\n{"kind":"tool_call","tool":"run_simulation","arguments":{"confirmed":true}}\nThanks.'
+    );
+
+    const decision = await planAssistantStep(llm, {
+      contextSummary: "Operator identity: PublicMachina.",
+      currentTaskSummary: "- Status: awaiting_confirmation",
+      conversation: [],
+      userInput: "Run it now",
+      tools: ASSISTANT_TOOLS,
+    });
+
+    expect(decision.kind).toBe("tool_call");
+    if (decision.kind === "tool_call") {
+      expect(decision.tool).toBe("run_simulation");
+      expect(decision.arguments.confirmed).toBe(true);
+    }
+  });
 });

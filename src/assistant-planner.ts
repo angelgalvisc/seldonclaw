@@ -2,7 +2,7 @@
  * assistant-planner.ts — LLM planning loop for the PublicMachina operator.
  */
 
-import type { LLMClient } from "./llm.js";
+import type { LLMClient, LLMResponse } from "./llm.js";
 import type { AssistantToolDefinition, AssistantToolName } from "./assistant-tools.js";
 
 export type AssistantPlannerDecision =
@@ -45,7 +45,29 @@ export async function planAssistantStep(
   llm: LLMClient,
   input: AssistantPlannerInput
 ): Promise<AssistantPlannerDecision> {
-  const prompt = [
+  const prompt = buildPlannerPrompt(input);
+  const system = buildPlannerSystemPrompt();
+  const attempts: AssistantPlannerMeta[] = [];
+  const initial = await requestPlannerJson(llm, prompt, system, 800);
+  attempts.push(initial.meta);
+
+  let data = initial.data;
+  if (!data) {
+    const repair = await requestPlannerJson(
+      llm,
+      buildRepairPrompt(input, initial.raw),
+      buildRepairSystemPrompt(),
+      400
+    );
+    attempts.push(repair.meta);
+    data = repair.data;
+  }
+
+  return finalizePlannerDecision(input, data, mergePlannerMeta(attempts));
+}
+
+function buildPlannerPrompt(input: AssistantPlannerInput): string {
+  return [
     "Operator workspace context:",
     input.contextSummary.trim() || "No workspace context available.",
     "",
@@ -65,8 +87,10 @@ export async function planAssistantStep(
   ]
     .filter(Boolean)
     .join("\n");
+}
 
-  const system = [
+function buildPlannerSystemPrompt(): string {
+  return [
     "You are PublicMachina, an operator assistant for public narrative simulations.",
     "You can either answer directly or choose exactly one tool call per step.",
     "Use tools when the user is asking you to design, run, inspect, report, export, query, interview, review history, or switch providers/models.",
@@ -76,19 +100,60 @@ export async function planAssistantStep(
     "Return JSON only.",
     'JSON schema: {"kind":"respond","message":"..."} or {"kind":"tool_call","tool":"...","arguments":{...}}',
   ].join("\n");
+}
 
-  const response = await llm.completeJSON<PlannerJson>("simulation", prompt, {
+function buildRepairSystemPrompt(): string {
+  return [
+    "You repair planner outputs for PublicMachina.",
+    "Return valid JSON only.",
+    'Target schema: {"kind":"respond","message":"..."} or {"kind":"tool_call","tool":"...","arguments":{...}}',
+    "If the source output is truncated, infer the smallest valid JSON that preserves the original intent.",
+    "Do not include markdown fences or commentary.",
+  ].join("\n");
+}
+
+function buildRepairPrompt(input: AssistantPlannerInput, raw: string): string {
+  return [
+    "The previous planner response was invalid JSON. Repair it.",
+    `Latest user input: ${input.userInput.trim()}`,
+    `Current task summary: ${input.currentTaskSummary.trim() || "No active task."}`,
+    `Known tools: ${input.tools.map((tool) => tool.name).join(", ")}`,
+    "Broken planner output:",
+    raw.trim() || "(empty response)",
+  ].join("\n");
+}
+
+async function requestPlannerJson(
+  llm: LLMClient,
+  prompt: string,
+  system: string,
+  maxTokens: number
+): Promise<{ data: PlannerJson | null; raw: string; meta: AssistantPlannerMeta }> {
+  const response = await llm.complete("simulation", prompt, {
     system,
     temperature: 0.0,
-    maxTokens: 800,
+    maxTokens,
   });
-  const { data } = response;
-  const meta: AssistantPlannerMeta = {
-    costUsd: response.meta.costUsd,
-    inputTokens: response.meta.inputTokens,
-    outputTokens: response.meta.outputTokens,
-    model: response.meta.model,
+
+  return {
+    data: parsePlannerJson(response.content),
+    raw: response.content,
+    meta: toPlannerMeta(response),
   };
+}
+
+function finalizePlannerDecision(
+  input: AssistantPlannerInput,
+  data: PlannerJson | null,
+  meta: AssistantPlannerMeta
+): AssistantPlannerDecision {
+  if (!data) {
+    return {
+      kind: "respond",
+      message: "I need a bit more specificity before I act. Tell me whether you want me to design, run, inspect, report on, or compare a simulation.",
+      meta,
+    };
+  }
 
   if (data.kind === "respond" && typeof data.message === "string" && data.message.trim()) {
     return {
@@ -117,6 +182,57 @@ export async function planAssistantStep(
     message: "I need a bit more specificity before I act. Tell me whether you want me to design, run, inspect, report on, or compare a simulation.",
     meta,
   };
+}
+
+function toPlannerMeta(response: LLMResponse): AssistantPlannerMeta {
+  return {
+    costUsd: response.costUsd,
+    inputTokens: response.inputTokens,
+    outputTokens: response.outputTokens,
+    model: response.model,
+  };
+}
+
+function mergePlannerMeta(attempts: AssistantPlannerMeta[]): AssistantPlannerMeta {
+  return attempts.reduce<AssistantPlannerMeta>(
+    (acc, meta) => ({
+      costUsd: acc.costUsd + meta.costUsd,
+      inputTokens: acc.inputTokens + meta.inputTokens,
+      outputTokens: acc.outputTokens + meta.outputTokens,
+      model: meta.model || acc.model,
+    }),
+    { costUsd: 0, inputTokens: 0, outputTokens: 0, model: "" }
+  );
+}
+
+function parsePlannerJson(raw: string): PlannerJson | null {
+  for (const candidate of plannerJsonCandidates(raw)) {
+    try {
+      return JSON.parse(candidate) as PlannerJson;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function plannerJsonCandidates(raw: string): string[] {
+  const normalized = normalizePlannerResponse(raw);
+  const candidates = [normalized];
+  const firstBrace = normalized.indexOf("{");
+  const lastBrace = normalized.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(normalized.slice(firstBrace, lastBrace + 1));
+  }
+  return [...new Set(candidates.map((item) => item.trim()).filter(Boolean))];
+}
+
+function normalizePlannerResponse(raw: string): string {
+  let text = raw.trim();
+  if (text.startsWith("```json")) text = text.slice(7);
+  else if (text.startsWith("```")) text = text.slice(3);
+  if (text.endsWith("```")) text = text.slice(0, -3);
+  return text.trim();
 }
 
 function renderTools(tools: AssistantToolDefinition[]): string {

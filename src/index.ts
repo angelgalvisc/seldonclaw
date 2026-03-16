@@ -134,12 +134,21 @@ function createPromptSession(): PromptSession {
   return {
     ask: (question, defaultValue) =>
       new Promise<string>((resolve, reject) => {
+        let settled = false;
         const suffix = defaultValue ? ` [${defaultValue}]` : "";
+        const onClose = () => {
+          if (settled) return;
+          settled = true;
+          reject(new Error("Prompt closed"));
+        };
+        rl.once("close", onClose);
         rl.question(`${question}${suffix}: `, (answer) => {
+          if (settled) return;
+          settled = true;
+          rl.off("close", onClose);
           const trimmed = answer.trim();
           resolve(trimmed || defaultValue || "");
         });
-        rl.once("close", () => reject(new Error("Prompt closed")));
       }),
     askSecret: (question) =>
       new Promise<string>((resolve, reject) => {
