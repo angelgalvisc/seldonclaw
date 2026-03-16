@@ -7,11 +7,13 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AssistantWorkspaceLayout } from "./assistant-workspace.js";
 
+export type AssistantSessionMode = "design" | "shell";
+
 export interface AssistantSession {
   id: string;
   path: string;
   createdAt: string;
-  mode: "design";
+  mode: AssistantSessionMode;
 }
 
 export interface AssistantSessionMessage {
@@ -25,7 +27,7 @@ type SessionEvent =
       type: "session_start";
       sessionId: string;
       createdAt: string;
-      mode: "design";
+      mode: AssistantSessionMode;
     }
   | ({
       type: "message";
@@ -33,7 +35,7 @@ type SessionEvent =
 
 export function createAssistantSession(
   layout: AssistantWorkspaceLayout,
-  mode: "design" = "design"
+  mode: AssistantSessionMode = "design"
 ): AssistantSession {
   const createdAt = new Date().toISOString();
   const id = `${createdAt.replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
@@ -50,7 +52,7 @@ export function createAssistantSession(
 
 export function resetAssistantSession(
   layout: AssistantWorkspaceLayout,
-  mode: "design" = "design"
+  mode: AssistantSessionMode = "design"
 ): AssistantSession {
   return createAssistantSession(layout, mode);
 }

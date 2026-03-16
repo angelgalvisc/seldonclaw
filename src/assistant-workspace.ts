@@ -237,12 +237,11 @@ export function appendDailyNote(
     "",
   ].join("\n");
 
-  const prefix = existsSync(filePath)
-    ? ""
-    : `# Daily Memory — ${day}\n\n`;
+  const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : null;
+  const prefix = existing === null ? `# Daily Memory — ${day}\n\n` : "";
   writeFileSync(
     filePath,
-    `${prefix}${existsSync(filePath) ? readFileSync(filePath, "utf-8") : ""}${block}`,
+    `${prefix}${existing ?? ""}${block}`,
     "utf-8"
   );
   return filePath;

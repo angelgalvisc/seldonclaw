@@ -402,7 +402,7 @@ describe("startShell", () => {
           id: "session-1",
           path: "/tmp/session-1.jsonl",
           createdAt: new Date().toISOString(),
-          mode: "design",
+          mode: "shell",
         },
         onAssistantClear: async () => {
           clearCalls += 1;
@@ -412,7 +412,7 @@ describe("startShell", () => {
             id: nextId,
             path: `/tmp/${nextId}.jsonl`,
             createdAt: new Date().toISOString(),
-            mode: "design",
+            mode: "shell",
           };
         },
       },

@@ -390,6 +390,7 @@ export function sanitizeForStorage(config: SimConfig): string {
       sanitized.providers.overrides[role]!.apiKeyEnv = "[REDACTED]";
     }
   }
+  sanitized.assistant.workspaceDir = "[REDACTED]";
 
   return JSON.stringify(sanitized, null, 2);
 }

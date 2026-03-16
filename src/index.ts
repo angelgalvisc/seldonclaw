@@ -703,7 +703,7 @@ async function runDesignCommand(
     bootstrapAssistantWorkspace(workspace, config);
   }
   const session = workspace && config.assistant.permissions.rememberConversations
-    ? createAssistantSession(workspace)
+    ? createAssistantSession(workspace, "design")
     : null;
 
   if (!prompt && interactive) {
@@ -1545,8 +1545,8 @@ export function createProgram(io: CliIO = defaultIO): Command {
           configPath: opts.config,
         };
         if (workspace && config.assistant.permissions.rememberConversations) {
-          shellCtx.assistantSession = createAssistantSession(workspace);
-          shellCtx.onAssistantClear = async () => resetAssistantSession(workspace);
+          shellCtx.assistantSession = createAssistantSession(workspace, "shell");
+          shellCtx.onAssistantClear = async () => resetAssistantSession(workspace, "shell");
         }
         shellCtx.llm = createCliLlm(config, { mock: opts.mock, feature: "shell" });
         shellCtx.backend = opts.mock

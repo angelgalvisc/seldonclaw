@@ -15,7 +15,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5+-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Tests](https://img.shields.io/badge/Tests-420_passing-brightgreen?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/Tests-422_passing-brightgreen?style=flat-square)]()
 
 ---
 
@@ -319,7 +319,7 @@ Documents ──→ Ingest ──→ Knowledge Graph ──→ Ontology ──�
 | `time-policy.ts` | Conservative time acceleration policy for quiet-tail compression | ~150 |
 | `design.ts` | Natural-language brief -> typed simulation spec -> rendered config | ~530 |
 | `assistant-workspace.ts` | Operator workspace bootstrap, visible identity files, durable memory, and simulation history index | ~563 |
-| `assistant-session.ts` | Persistent operator session transcripts in JSONL | ~101 |
+| `assistant-session.ts` | Persistent operator session transcripts in JSONL | ~110 |
 | `assistant-context.ts` | Operator context assembly from identity, memory, sessions, and past simulations | ~110 |
 | `profiles.ts` | LLM-powered actor generation from knowledge graph entities | ~610 |
 | `ontology.ts` | LLM-powered ontology extraction (entity types, edge types, topics) | ~370 |
@@ -332,7 +332,7 @@ Documents ──→ Ingest ──→ Knowledge Graph ──→ Ontology ──�
 | `interview.ts` | Actor interview flow (single-turn and multi-turn) | ~200 |
 | `ckp.ts` | CKP export/import with secret scrubbing and lived-experience bundle capture | ~718 |
 | `shell.ts` | Conversational REPL: NL→SQL, interviews, schema inspection, and live provider/model switching | ~515 |
-| `config.ts` | YAML config parsing, validation, platform policy normalization, and secret sanitization | ~812 |
+| `config.ts` | YAML config parsing, validation, platform policy normalization, and secret sanitization | ~877 |
 | `env.ts` | Lightweight `.env` loading and in-place API key persistence for setup | ~58 |
 | `telemetry.ts` | Round-level metrics persistence (tier calls, timing) | ~155 |
 | `types.ts` | Domain types: rows, snapshots, DTOs, platform/runtime projections | ~537 |
@@ -653,7 +653,7 @@ npx tsc --noEmit
 
 ### Test Suite
 
-420 tests across 30 test files covering:
+422 tests across 31 test files covering:
 
 - Knowledge graph pipeline (ingest → claims → entities → resolution)
 - Ontology extraction and entity typing
@@ -730,7 +730,7 @@ publicmachina/
 │   ├── reproducibility.ts # Seedable PRNG
 │   ├── types.ts          # Domain types
 │   └── ids.ts            # ID generation
-├── tests/                # 30 test files, 420 tests
+├── tests/                # 31 test files, 422 tests
 ├── package.json
 ├── tsconfig.json
 ├── .env.example

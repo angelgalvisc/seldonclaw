@@ -387,6 +387,14 @@ simulation:
       expect(parsed.providers.overrides.report.apiKeyEnv).toBe("[REDACTED]");
     });
 
+    it("redacts assistant workspaceDir", () => {
+      const config = defaultConfig();
+      config.assistant.workspaceDir = "/Users/agc/private-workspace";
+
+      const parsed = JSON.parse(sanitizeForStorage(config));
+      expect(parsed.assistant.workspaceDir).toBe("[REDACTED]");
+    });
+
     it("does not modify the original config", () => {
       const config = defaultConfig();
       sanitizeForStorage(config);
