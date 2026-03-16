@@ -30,7 +30,7 @@ SeldonClaw is an auditable social simulation engine for testing how narratives, 
 
 These are simulated agents orchestrated by a central engine, not independent runtime containers. Each actor carries persistent state and moves through feed construction, cognitive routing, memory retrieval, optional web search, and platform policy before acting.
 
-Its strongest differentiator is explicit and visible: **SeldonClaw is the first social simulation engine where agents can search the real web before deciding what to say.** Tier A and Tier B actors can query a live SearXNG endpoint, receive temporally filtered context, and use that information inside the decision loop. Results are cached in SQLite, logged per actor and round, and replayable later under the same cutoff and seed.
+Its strongest differentiator is explicit and visible: **SeldonClaw is the first social simulation engine where agents can search the real web before deciding what to say.** Tier A and Tier B actors can query a live SearXNG endpoint, then SeldonClaw applies an exact temporal cutoff before injecting that context into the decision loop. Results are cached in SQLite, logged per actor and round, and replayable later under the same cutoff and seed.
 
 This makes SeldonClaw useful as both a scenario lab and an operator tool: you can stress-test communication strategies, simulate narrative shocks, interview generated actors after the run, and inspect the full chain of why a given behavior emerged. Every run lives in a single SQLite file. Every major artifact remains inspectable.
 
@@ -59,7 +59,7 @@ At the operator level, it gives researchers and builders a way to design simulat
 
 ### Key Capabilities
 
-- **Web-grounded decisions** — Tier A/B agents query real web sources via SearXNG before deciding, with temporal cutoff filtering and cache-first determinism. [See details below.](#web-grounded-search)
+- **Web-grounded decisions** — Tier A/B agents query real web sources via SearXNG before deciding, with an exact cutoff applied by SeldonClaw and cache-first determinism. [See details below.](#web-grounded-search)
 - **Natural-language simulation design** — Turn a free-form brief into a validated `simulation.spec.json` plus deterministic `seldonclaw.config.yaml`
 - **Deterministic simulations** — Seedable PRNG (xoshiro128**) guarantees identical runs from the same seed
 - **3-tier cognition** — Tier A (always LLM), Tier B (probabilistic LLM), Tier C (rule-based) for cost-efficient agent decisions
@@ -128,7 +128,7 @@ Round N begins
 
 ### Temporal Backtesting
 
-The `cutoffDate` parameter controls what information agents can access. This enables counterfactual analysis: run the same scenario under different information conditions.
+The `cutoffDate` parameter controls what information agents can access. SearXNG itself exposes broad `time_range` filters for engines that support them, but SeldonClaw applies the exact cutoff date after retrieval so the same scenario can be replayed under tightly bounded information conditions.
 
 | Scenario | `cutoffDate` | Effect |
 |----------|-------------|--------|
@@ -152,14 +152,14 @@ Search results are cached in SQLite by `(query, cutoffDate, language, categories
 | Temporal cutoff control | **Yes** | — | — | — | — |
 | Deterministic search replay | **Yes** | — | — | — | — |
 | Search audit trail | **Yes** | — | — | — | — |
-| Self-hosted search engine | **Yes** (SearXNG) | — | — | — | — |
+| Self-hosted metasearch backend | **Yes** (SearXNG) | — | — | — | — |
 
 ### Search Configuration
 
 ```yaml
 search:
   enabled: true
-  endpoint: "http://localhost:8888"  # SearXNG instance
+  endpoint: "http://localhost:8888"  # self-hosted SearXNG instance
   cutoffDate: "2024-09-15"          # agents see nothing published after this date
   strictCutoff: true                # drop results without a published date
   enabledTiers: ["A", "B"]          # only LLM-backed tiers search
@@ -180,7 +180,7 @@ search:
   timeoutMs: 3000
 ```
 
-> **Prerequisite:** A running [SearXNG](https://docs.searxng.org/) instance with JSON output enabled. A Docker Compose setup takes under a minute. If search is disabled, the engine falls back to feed-only cognition with no behavior change.
+> **Prerequisite:** A running [SearXNG](https://docs.searxng.org/) instance with JSON output enabled in `search.formats`. The official SearXNG docs recommend a containerized deployment and expose a local instance naturally at `http://localhost:8888`. Exact cutoff quality depends on engines returning published dates; `strictCutoff: true` will exclude undated results. If search is disabled, the engine falls back to feed-only cognition with no behavior change.
 
 Search eligibility is policy-driven:
 
