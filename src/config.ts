@@ -20,7 +20,6 @@ export interface SimConfig {
   simulation: SimulationConfig;
   cognition: CognitionConfig;
   providers: ProvidersConfig;
-  nullclaw: NullClawConfig;
   platform: PlatformPolicyConfig;
   search: SearchConfig;
   feed: FeedConfig;
@@ -70,21 +69,6 @@ export interface ProvidersConfig {
   generation: ProviderConfig;
   simulation: ProviderConfig;
   report: ProviderConfig;
-}
-
-export interface NullClawConfig {
-  gatewayUrl: string;
-  binary: string;
-  autoStart: boolean;
-  upstreamProvider: string;
-  pairing: {
-    enabled: boolean;
-    token: string;
-  };
-  agentProfile: {
-    name: string;
-    capabilities: string[];
-  };
 }
 
 export interface FeedConfig {
@@ -232,20 +216,6 @@ const DEFAULTS: SimConfig = {
       apiKeyEnv: "ANTHROPIC_API_KEY",
     },
   },
-  nullclaw: {
-    gatewayUrl: "http://localhost:3000",
-    binary: "nullclaw",
-    autoStart: true,
-    upstreamProvider: "simulation",
-    pairing: {
-      enabled: true,
-      token: "",
-    },
-    agentProfile: {
-      name: "seldonclaw-worker",
-      capabilities: ["decide", "interview"],
-    },
-  },
   platform: structuredClone(DEFAULT_PLATFORM_POLICY),
   search: {
     enabled: false,
@@ -374,7 +344,7 @@ function normalizeConfig(config: SimConfig, parsed: Partial<SimConfig>): SimConf
 // ═══════════════════════════════════════════════════════
 
 /**
- * Strip API keys, pairing tokens, and other secrets.
+ * Strip API key env names and other secret-bearing references.
  * Returns a clean JSON string safe for persistent storage.
  */
 export function sanitizeForStorage(config: SimConfig): string {
@@ -386,11 +356,6 @@ export function sanitizeForStorage(config: SimConfig): string {
     if (provider && typeof provider === "object" && "apiKeyEnv" in provider) {
       (provider as ProviderConfig).apiKeyEnv = "[REDACTED]";
     }
-  }
-
-  // Strip pairing token
-  if (sanitized.nullclaw?.pairing) {
-    sanitized.nullclaw.pairing.token = "[REDACTED]";
   }
 
   return JSON.stringify(sanitized, null, 2);

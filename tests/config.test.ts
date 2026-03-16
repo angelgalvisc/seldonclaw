@@ -3,7 +3,7 @@
  *
  * Ref: CLAUDE.md §Step 1.2 verification criteria
  * - Loads example config from PLAN.md
- * - sanitizeForStorage() removes apiKeyEnv values, pairing token
+ * - sanitizeForStorage() removes apiKeyEnv values
  * - Invalid config (negative seed, probability > 1) → descriptive error
  * - Default config has all required fields
  */
@@ -43,9 +43,6 @@ describe("config.ts", () => {
 
       expect(config.providers.analysis.sdk).toBe("anthropic");
       expect(config.providers.analysis.model).toBe("claude-sonnet-4-20250514");
-
-      expect(config.nullclaw.gatewayUrl).toBe("http://localhost:3000");
-      expect(config.nullclaw.pairing.enabled).toBe(true);
 
       expect(config.feed.size).toBe(20);
       expect(config.feed.recencyWeight + config.feed.popularityWeight + config.feed.relevanceWeight).toBeCloseTo(1.0);
@@ -140,18 +137,6 @@ providers:
     model: "claude-sonnet-4-20250514"
     apiKeyEnv: "ANTHROPIC_API_KEY"
 
-nullclaw:
-  gatewayUrl: "http://localhost:3000"
-  binary: "nullclaw"
-  autoStart: true
-  upstreamProvider: "simulation"
-  pairing:
-    enabled: true
-    token: ""
-  agentProfile:
-    name: "seldonclaw-worker"
-    capabilities: ["decide", "interview"]
-
 feed:
   size: 20
   recencyWeight: 0.4
@@ -211,7 +196,6 @@ output:
       expect(config.simulation.platform).toBe("x");
       expect(config.simulation.timezone).toBe("America/Bogota");
       expect(config.cognition.tierA.archetypeOverrides).toContain("media");
-      expect(config.nullclaw.gatewayUrl).toBe("http://localhost:3000");
       expect(config.search.cutoffDate).toBe("2026-03-01");
       expect(config.search.allowArchetypes).toEqual(["media"]);
     });
@@ -392,22 +376,11 @@ simulation:
       expect(parsed.providers.report.apiKeyEnv).toBe("[REDACTED]");
     });
 
-    it("redacts pairing token", () => {
-      const config = defaultConfig();
-      config.nullclaw.pairing.token = "super-secret-token-123";
-      const sanitized = sanitizeForStorage(config);
-      const parsed = JSON.parse(sanitized);
-
-      expect(parsed.nullclaw.pairing.token).toBe("[REDACTED]");
-    });
-
     it("does not modify the original config", () => {
       const config = defaultConfig();
-      config.nullclaw.pairing.token = "secret";
       sanitizeForStorage(config);
 
       // Original should be unchanged
-      expect(config.nullclaw.pairing.token).toBe("secret");
       expect(config.providers.analysis.apiKeyEnv).toBe("ANTHROPIC_API_KEY");
     });
   });

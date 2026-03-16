@@ -69,7 +69,7 @@ These three do NOT depend on each other. Can be built in parallel.
 
 **Verification:**
 - [x] Loads example config from PLAN.md
-- [x] `sanitizeForStorage()` removes `apiKeyEnv` values, pairing token
+- [x] `sanitizeForStorage()` removes `apiKeyEnv` values
 - [x] Invalid config (negative seed, probability > 1) → descriptive error (ConfigError with field)
 - [x] Tests: `config.test.ts` — 17 tests pass
 
@@ -205,7 +205,7 @@ NullClaw (96K LOC Zig binary) was evaluated as over-engineering for SeldonClaw's
 Actor decisions only require structured LLM completions — not agent capabilities (tools, channels, sandbox).
 DirectLLMBackend calls llm.ts directly, zero external process dependency.
 CKP compatibility preserved via `@clawkernel/sdk` (actor export/import, A2A message types).
-NullClawBackend remains defined in CognitionBackend interface for future swap if needed.
+`CognitionBackend` remains swappable in principle, but no NullClaw runtime is wired in the active product.
 
 ### Step 3.1: cognition.ts ✅
 

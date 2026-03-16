@@ -3,6 +3,7 @@
 > Current authority note:
 > this file still contains historical v1 planning sections. When specific details here conflict with the implemented runtime, treat the code as authoritative:
 > [config.ts](/Users/agc/Documents/seldonclaw/src/config.ts), [platform.ts](/Users/agc/Documents/seldonclaw/src/platform.ts), [schema.ts](/Users/agc/Documents/seldonclaw/src/schema.ts), [store.ts](/Users/agc/Documents/seldonclaw/src/store.ts), [cognition.ts](/Users/agc/Documents/seldonclaw/src/cognition.ts), [feed.ts](/Users/agc/Documents/seldonclaw/src/feed.ts), and [engine.ts](/Users/agc/Documents/seldonclaw/src/engine.ts).
+> Historical `NullClawBackend` / `nullclaw` sections below are design notes only. They are not part of the active runtime or active config surface.
 
 ## Context
 
@@ -16,7 +17,7 @@ MiroFish (github.com/666ghj/MiroFish) is a pioneering social simulation engine w
 |---|---|---|
 | Language | **TypeScript** | Native CKP SDK, fast iteration, auditable |
 | Storage | **1 SQLite file** behind `GraphStore` interface | Zero cloud, Pi 4 viable, FTS5 + optional embedding cache. Interface allows swapping storage |
-| Cognition backend | **DirectLLMBackend** (default), not tied to any external runtime | Calls llm.ts directly. Swappable with NullClawBackend or any CKP conformant runtime |
+| Cognition backend | **DirectLLMBackend** (default), not tied to any external runtime | Calls llm.ts directly. `CognitionBackend` remains swappable in principle, but no NullClaw runtime is wired today |
 | Actors | **ActorSpec + ActorState** separated | Spec = portable contract (CKP). State = beliefs/stance/fatigue (simulation) |
 | Cognition | **3 layers**: CognitionRouter + DecisionPolicy + CognitionBackend | Router decides tier. Policy decides rules. Backend executes. Clean separation |
 | Social engine | **Explicit standalone module** | activation, feed, propagation, fatigue, events — not CKP Swarm |
@@ -85,12 +86,12 @@ MiroFish (github.com/666ghj/MiroFish) is a pioneering social simulation engine w
 │  ├── DirectLLMBackend (default, calls llm.ts)        │
 │  ├── RecordedBackend (replay from decision_cache)    │
 │  ├── MockBackend (tests)                             │
-│  └── NullClawBackend (optional, HTTP gateway)        │
+│  └── Additional backends are future work             │
 └──────────────────────────────────────────────────────┘
 ```
 
 **1 process total. Pi 4 viable (footprint pending benchmark).**
-NullClaw Gateway is optional — only needed if `NullClawBackend` is configured instead of `DirectLLMBackend`.
+The active runtime uses `DirectLLMBackend`; external gateway-backed cognition remains future work only.
 
 ## Project Structure
 
@@ -1765,7 +1766,7 @@ NullClaw integration deferred — actors only need structured LLM completions, n
 | `interview.ts` | P2 | ✅ Phase 7 |
 | `shell.ts` | P2 | ✅ Phase 8 |
 
-**Phases 1-8 complete, plus Phase 9A conservative time acceleration and the Phase 10-13 foundation** (`404/404` tests across 27 test files). The runtime now includes:
+**Phases 1-8 complete, plus Phase 9A conservative time acceleration and the Phase 10-13 foundation** (`403/403` tests across 27 test files). The runtime now includes:
 
 - expanded actions: `quote`, `unfollow`, `unlike`, `delete`, `mute`, `block`, `report`
 - deterministic platform moderation based on report thresholds

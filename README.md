@@ -15,7 +15,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5+-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Tests](https://img.shields.io/badge/Tests-404_passing-brightgreen?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/Tests-403_passing-brightgreen?style=flat-square)]()
 [![CKP](https://img.shields.io/badge/CKP-v0.2.6-orange?style=flat-square)](https://github.com/angelgalvisc/clawkernel)
 
 ---
@@ -27,6 +27,8 @@
 ## Overview
 
 SeldonClaw is an auditable social simulation engine for testing how narratives, institutions, media actors, and online communities respond to real-world scenarios. It turns source material, configurable social dynamics, and optional live web context into a replayable simulation environment where agents observe, decide, interact, and evolve across rounds.
+
+These are simulated agents orchestrated by a central engine, not independent runtime containers. Each actor carries persistent state and moves through feed construction, cognitive routing, memory retrieval, optional web search, and platform policy before acting.
 
 Its strongest differentiator is explicit and visible: **SeldonClaw is the first social simulation engine where agents can search the real web before deciding what to say.** Tier A and Tier B actors can query a live SearXNG endpoint, receive temporally filtered context, and use that information inside the decision loop. Results are cached in SQLite, logged per actor and round, and replayable later under the same cutoff and seed.
 
@@ -45,7 +47,7 @@ This makes SeldonClaw useful as both a scenario lab and an operator tool: you ca
 - A full simulated run with actors, posts, rounds, exposures, narratives, and telemetry
 - A generated `simulation.spec.json` and executable config when you use natural-language design
 - Reports, actor interviews, and shell-based analysis tools
-- CKP-exportable agents and a reproducible audit trail
+- CKP-exportable/importable agents and a reproducible audit trail
 
 ## Why It Exists
 
@@ -564,7 +566,7 @@ npx tsc --noEmit
 
 ### Test Suite
 
-404 tests across 27 test files covering:
+403 tests across 27 test files covering:
 
 - Knowledge graph pipeline (ingest → claims → entities → resolution)
 - Ontology extraction and entity typing
@@ -634,7 +636,7 @@ seldonclaw/
 │   ├── reproducibility.ts # Seedable PRNG
 │   ├── types.ts          # Domain types
 │   └── ids.ts            # ID generation
-├── tests/                # 27 test files, 404 tests
+├── tests/                # 27 test files, 403 tests
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
