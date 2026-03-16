@@ -57,10 +57,89 @@ function setupTestStore(): {
     follower_count: 100,
     following_count: 50,
   });
+  store.addActor({
+    id: "actor-2",
+    run_id: runId,
+    entity_id: null,
+    archetype: "media",
+    cognition_tier: "B",
+    name: "Other Actor",
+    handle: "otheractor",
+    personality: "A skeptical local journalist.",
+    bio: "Other bio",
+    age: 41,
+    gender: "female",
+    profession: "journalist",
+    region: "US",
+    language: "en",
+    stance: "critical",
+    sentiment_bias: -0.4,
+    activity_level: 0.6,
+    influence_weight: 0.4,
+    community_id: null,
+    active_hours: JSON.stringify([8, 9, 10, 18, 19]),
+    follower_count: 80,
+    following_count: 40,
+  });
   store.addActorBelief(actorId, "education", 0.3);
   store.addActorBelief(actorId, "climate", -0.5);
   store.addActorTopic(actorId, "education", 0.8);
   store.addActorTopic(actorId, "climate", 0.6);
+  store.addPost({
+    id: "post-1",
+    run_id: runId,
+    author_id: actorId,
+    content: "Tuition policy needs public scrutiny before the vote.",
+    post_kind: "post",
+    round_num: 2,
+    sim_timestamp: "2026-03-01T10:00:00.000Z",
+    likes: 4,
+    reposts: 2,
+    comments: 1,
+    reach: 18,
+    sentiment: 0.2,
+  });
+  store.addPostTopic("post-1", "education");
+  store.addPost({
+    id: "post-2",
+    run_id: runId,
+    author_id: "actor-2",
+    content: "Budget cuts could backfire politically if they hit students first.",
+    post_kind: "quote",
+    round_num: 3,
+    sim_timestamp: "2026-03-01T11:00:00.000Z",
+    likes: 3,
+    reposts: 1,
+    comments: 2,
+    reach: 12,
+    sentiment: -0.4,
+  });
+  store.addPostTopic("post-2", "education");
+  store.addExposure({
+    actor_id: actorId,
+    post_id: "post-2",
+    round_num: 3,
+    run_id: runId,
+    reaction: "liked",
+  });
+  store.cacheDecision({
+    id: "decision-1",
+    run_id: runId,
+    round_num: 4,
+    actor_id: actorId,
+    request_hash: "hash-1",
+    raw_response: "{\"action\":\"post\",\"reasoning\":\"Escalate the issue carefully.\"}",
+    parsed_decision: JSON.stringify({
+      action: "post",
+      content: "Public pressure is building around tuition policy.",
+      reasoning: "Escalate the issue carefully.",
+    }),
+    model_id: "claude-test",
+    prompt_version: "v1",
+    tokens_input: 120,
+    tokens_output: 40,
+    duration_ms: 900,
+  });
   store.addActorMemory({
     id: "memory-1",
     run_id: runId,
@@ -151,14 +230,20 @@ describe("exportAgent", () => {
 
     const result = exportAgent(store, runId, actorId, outDir);
 
-    expect(result.files).toHaveLength(8);
+    expect(result.files).toHaveLength(11);
     expect(result.memoriesExported).toBe(1);
+    expect(result.postsExported).toBe(1);
+    expect(result.exposuresExported).toBe(1);
+    expect(result.decisionsExported).toBe(1);
     const expectedFiles = [
       "claw.yaml",
       "actor_state.json",
       "beliefs.json",
       "topics.json",
       "memories.json",
+      "posts.json",
+      "exposures.json",
+      "decisions.json",
       "provenance.json",
       "persona.md",
       "manifest.meta.json",
@@ -221,6 +306,36 @@ describe("exportAgent", () => {
     expect(memories[0].kind).toBe("reflection");
     expect(memories[0].summary).toContain("official narrative");
     expect(memories[0].topic).toBe("education");
+  });
+
+  it("exports posts, exposures, and decision traces", () => {
+    const { store, runId, actorId } = setupTestStore();
+    const outDir = join(makeTempDir(), "export");
+
+    exportAgent(store, runId, actorId, outDir);
+
+    const posts = JSON.parse(
+      readFileSync(join(outDir, "posts.json"), "utf-8"),
+    );
+    const exposures = JSON.parse(
+      readFileSync(join(outDir, "exposures.json"), "utf-8"),
+    );
+    const decisions = JSON.parse(
+      readFileSync(join(outDir, "decisions.json"), "utf-8"),
+    );
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0].post_kind).toBe("post");
+    expect(posts[0].topics).toEqual(["education"]);
+
+    expect(exposures).toHaveLength(1);
+    expect(exposures[0].reaction).toBe("liked");
+    expect(exposures[0].post_author_id).toBe("actor-2");
+
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0].action).toBe("post");
+    expect(decisions[0].reasoning).toContain("Escalate");
+    expect(decisions[0].tokens_input).toBe(120);
   });
 
   it("scrubs secrets from exported JSON", () => {
@@ -300,6 +415,9 @@ describe("importAgent", () => {
     expect(result.beliefsImported).toBe(2);
     expect(result.topicsImported).toBe(2);
     expect(result.memoriesImported).toBe(1);
+    expect(result.postsImported).toBe(1);
+    expect(result.exposuresImported).toBe(1);
+    expect(result.decisionsImported).toBe(1);
 
     // Verify the actor exists in the store
     const importedActor = store.getActor(result.actorId);
@@ -317,9 +435,11 @@ describe("importAgent", () => {
     expect(educationBelief!.sentiment).toBe(0.3);
 
     const memories = store.getActorMemories(result.actorId, importRunId, 10);
-    expect(memories).toHaveLength(1);
-    expect(memories[0].summary).toContain("official narrative");
-    expect(memories[0].topic).toBe("education");
+    expect(memories).toHaveLength(4);
+    expect(memories.some((memory) => memory.summary.includes("official narrative"))).toBe(true);
+    expect(memories.some((memory) => memory.summary.includes("authored a post"))).toBe(true);
+    expect(memories.some((memory) => memory.summary.includes("liked a quote from actor-2"))).toBe(true);
+    expect(memories.some((memory) => memory.summary.includes("Decision trace"))).toBe(true);
   });
 
   it("generates new UUID for imported actor", () => {
@@ -370,6 +490,9 @@ describe("importAgent", () => {
 
     exportAgent(store, runId, actorId, outDir);
     rmSync(join(outDir, "memories.json"));
+    rmSync(join(outDir, "posts.json"));
+    rmSync(join(outDir, "exposures.json"));
+    rmSync(join(outDir, "decisions.json"));
 
     const importRunId = "import-run-legacy";
     store.createRun({
@@ -384,6 +507,9 @@ describe("importAgent", () => {
 
     const result = importAgent(store, importRunId, outDir);
     expect(result.memoriesImported).toBe(0);
+    expect(result.postsImported).toBe(0);
+    expect(result.exposuresImported).toBe(0);
+    expect(result.decisionsImported).toBe(0);
     expect(store.getActorMemories(result.actorId, importRunId, 10)).toHaveLength(0);
   });
 });

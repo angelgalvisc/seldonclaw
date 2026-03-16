@@ -1356,6 +1356,10 @@ seldonclaw export-agent --run <run-id> --actor journalist-01 --out ./agent-bundl
 #   ├── actor_state.json       # beliefs, stance, influence, etc.
 #   ├── beliefs.json           # normalized beliefs (topic → sentiment)
 #   ├── topics.json            # weighted topic interests
+#   ├── memories.json          # persisted reflections/interactions/events/narratives
+#   ├── posts.json             # authored posts with engagement + moderation metadata
+#   ├── exposures.json         # exposure history with reactions and post context
+#   ├── decisions.json         # decision traces with parsed action/reasoning + model metadata
 #   ├── provenance.json        # entity → claims → chunks → documents
 #   ├── persona.md             # full personality text
 #   └── manifest.meta.json     # run_id, round exported, seldonclaw version, schema version
@@ -1723,7 +1727,7 @@ with the CLI/shell phase, not before Phase 2. The core pipeline comes first.
 | **Conformance** | None | **CKP schema** on archetypes, integration tests on worker |
 | **Reproducibility** | None | **seed (PRNG) + decision_cache (LLM) + snapshots + run_manifest** |
 | **Telemetry** | Ad-hoc JSONL | **Structured SQLite** with cost tracking per tier |
-| **Portability** | None | **export-agent bundle** (claw.yaml + state + beliefs + provenance) |
+| **Portability** | None | **export-agent bundle** (claw.yaml + state + beliefs + memories + posts + exposures + decisions + provenance) |
 | **Composition** | Simulated only | Simulated + real via CKP Swarm |
 | **Timezone** | Hardcoded China | **Configurable IANA** |
 | **Report** | Direct LLM | **SQL metrics → structured findings → LLM narrative** |
@@ -2250,7 +2254,7 @@ seldonclaw run \
    - Tier A/B: deterministic via `decision_cache` + `RecordedBackend` (0 LLM calls on replay)
 6. **Export-agent:**
    - `seldonclaw export-agent --run <id> --actor journalist-01 --out ./bundle/`
-   - Bundle contains: claw.yaml (valid CKP), actor_state.json, beliefs.json, topics.json, provenance.json, manifest.meta.json
+   - Bundle contains: claw.yaml (valid CKP), actor_state.json, beliefs.json, topics.json, memories.json, posts.json, exposures.json, decisions.json, provenance.json, manifest.meta.json
 7. **Import-agent:** `seldonclaw import-agent --bundle ./bundle/ --db sim2.db --run <id>` reconstitutes actor
 8. **Report policy:** `report.ts` only reads normalized tables (verify with grep: no JSON parse in report queries)
 9. **Interview:** `seldonclaw interview --db simulation.db --actor journalist-01` responds coherently via CognitionBackend

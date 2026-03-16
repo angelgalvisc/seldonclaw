@@ -20,12 +20,15 @@ import type {
   ActorRow,
   Post,
   Exposure,
+  ActorPostSnapshot,
+  ActorExposureSnapshot,
   Follow,
   Mute,
   Block,
   ReportRow,
   NarrativeRow,
   ActorMemoryRow,
+  DecisionCacheRow,
   PostEmbeddingRow,
   ActorInterestEmbeddingRow,
   SearchCacheRow,
@@ -134,6 +137,9 @@ export interface GraphStore {
     runId: string,
     sinceRound: number
   ): Post[];
+  listActorPostSnapshots(actorId: string, runId: string): ActorPostSnapshot[];
+  listActorExposureSnapshots(actorId: string, runId: string): ActorExposureSnapshot[];
+  listActorDecisionCache(actorId: string, runId: string): DecisionCacheRow[];
   getEngagementOnPosts(
     postIds: string[],
     runId: string
@@ -1000,6 +1006,112 @@ export class SQLiteGraphStore implements GraphStore {
          ORDER BY round_num DESC`
       )
       .all(actorId, runId, sinceRound) as Post[];
+  }
+
+  listActorPostSnapshots(actorId: string, runId: string): ActorPostSnapshot[] {
+    const rows = this.db
+      .prepare(
+        `SELECT *
+         FROM posts
+         WHERE author_id = ? AND run_id = ?
+         ORDER BY round_num ASC, sim_timestamp ASC, id ASC`
+      )
+      .all(actorId, runId) as Post[];
+
+    if (rows.length === 0) return [];
+
+    const postIds = rows.map((row) => row.id);
+    const placeholders = postIds.map(() => "?").join(",");
+    const topicRows = this.db
+      .prepare(
+        `SELECT post_id, topic
+         FROM post_topics
+         WHERE post_id IN (${placeholders})`
+      )
+      .all(...postIds) as Array<{ post_id: string; topic: string }>;
+
+    const topicsByPost = new Map<string, string[]>();
+    for (const row of topicRows) {
+      const topics = topicsByPost.get(row.post_id) ?? [];
+      topics.push(row.topic);
+      topicsByPost.set(row.post_id, topics);
+    }
+
+    return rows.map((row) => ({
+      ...row,
+      topics: topicsByPost.get(row.id) ?? [],
+    }));
+  }
+
+  listActorExposureSnapshots(
+    actorId: string,
+    runId: string
+  ): ActorExposureSnapshot[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           e.actor_id,
+           e.post_id,
+           e.round_num,
+           e.run_id,
+           e.reaction,
+           p.author_id as post_author_id,
+           p.content as post_content,
+           p.post_kind as post_kind,
+           p.sentiment as post_sentiment,
+           p.sim_timestamp as post_sim_timestamp
+         FROM exposures e
+         JOIN posts p ON p.id = e.post_id
+         WHERE e.actor_id = ? AND e.run_id = ?
+         ORDER BY e.round_num ASC, e.post_id ASC`
+      )
+      .all(actorId, runId) as Array<{
+      actor_id: string;
+      post_id: string;
+      round_num: number;
+      run_id: string;
+      reaction: Exposure["reaction"];
+      post_author_id: string;
+      post_content: string;
+      post_kind: Post["post_kind"];
+      post_sentiment?: number | null;
+      post_sim_timestamp: string;
+    }>;
+
+    if (rows.length === 0) return [];
+
+    const postIds = [...new Set(rows.map((row) => row.post_id))];
+    const placeholders = postIds.map(() => "?").join(",");
+    const topicRows = this.db
+      .prepare(
+        `SELECT post_id, topic
+         FROM post_topics
+         WHERE post_id IN (${placeholders})`
+      )
+      .all(...postIds) as Array<{ post_id: string; topic: string }>;
+
+    const topicsByPost = new Map<string, string[]>();
+    for (const row of topicRows) {
+      const topics = topicsByPost.get(row.post_id) ?? [];
+      topics.push(row.topic);
+      topicsByPost.set(row.post_id, topics);
+    }
+
+    return rows.map((row) => ({
+      ...row,
+      post_topics: topicsByPost.get(row.post_id) ?? [],
+    }));
+  }
+
+  listActorDecisionCache(actorId: string, runId: string): DecisionCacheRow[] {
+    return this.db
+      .prepare(
+        `SELECT *
+         FROM decision_cache
+         WHERE actor_id = ? AND run_id = ?
+         ORDER BY round_num ASC, id ASC`
+      )
+      .all(actorId, runId) as DecisionCacheRow[];
   }
 
   getEngagementOnPosts(

@@ -2,7 +2,8 @@
  * ckp.ts — CKP (ClawKernel Protocol) export/import module
  *
  * Export and import agent bundles in the CKP format.
- * Bundles include agent cards, beliefs, topics, memories, provenance, and persona.
+ * Bundles include agent cards, beliefs, topics, memories, authored posts,
+ * exposure history, decision traces, provenance, and persona.
  */
 
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
@@ -13,7 +14,13 @@ import {
   type CkpAgentProjectionInput,
 } from "@clawkernel/sdk";
 import type { GraphStore } from "./store.js";
-import type { ActorMemoryRow, ActorRow } from "./types.js";
+import type {
+  ActorExposureSnapshot,
+  ActorMemoryRow,
+  ActorPostSnapshot,
+  ActorRow,
+  DecisionCacheRow,
+} from "./types.js";
 import { uuid } from "./ids.js";
 
 // ═══════════════════════════════════════════════════════
@@ -25,6 +32,9 @@ export interface ExportResult {
   outDir: string;
   files: string[];
   memoriesExported: number;
+  postsExported: number;
+  exposuresExported: number;
+  decisionsExported: number;
 }
 
 export interface ImportResult {
@@ -33,13 +43,15 @@ export interface ImportResult {
   topicsImported: number;
   beliefsImported: number;
   memoriesImported: number;
+  postsImported: number;
+  exposuresImported: number;
+  decisionsImported: number;
 }
 
 // ═══════════════════════════════════════════════════════
 // scrubSecrets — recursive secret redaction
 // ═══════════════════════════════════════════════════════
 
-const SECRET_KEY_RE = /api.?key|token|secret|bearer|password|auth|credential/i;
 const SECRET_VALUE_RE = /^sk-|^Bearer |^ghp_|^xoxb-/;
 const SECRET_TEXT_RE = /\b(sk-[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9._-]+|ghp_[A-Za-z0-9]+|xoxb-[A-Za-z0-9-]+)\b/g;
 
@@ -79,7 +91,7 @@ function walk(node: unknown): void {
     const value = record[key];
 
     // Redact by key name
-    if (SECRET_KEY_RE.test(key) && typeof value === "string") {
+    if (looksLikeSecretKey(key) && typeof value === "string") {
       record[key] = "[REDACTED]";
       continue;
     }
@@ -102,6 +114,33 @@ function walk(node: unknown): void {
   }
 }
 
+function looksLikeSecretKey(key: string): boolean {
+  const normalized = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase();
+  const tokens = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (
+      token === "token" ||
+      token === "secret" ||
+      token === "bearer" ||
+      token === "password" ||
+      token === "credential" ||
+      token === "credentials" ||
+      token === "authorization"
+    ) {
+      return true;
+    }
+    if (token === "api" && tokens[i + 1] === "key") return true;
+    if (token === "auth" && tokens[i + 1] !== "or") return true;
+  }
+
+  return false;
+}
+
 // ═══════════════════════════════════════════════════════
 // exportAgent — write CKP bundle to disk
 // ═══════════════════════════════════════════════════════
@@ -118,9 +157,12 @@ export function exportAgent(
     throw new Error("Actor not found: " + actorId);
   }
 
-  // 2. Get context (beliefs, topics, recent posts)
+  // 2. Get context and actor experience
   const context = store.queryActorContext(actorId, runId);
   const memories = store.listActorMemories(actorId, runId);
+  const posts = store.listActorPostSnapshots(actorId, runId);
+  const exposures = store.listActorExposureSnapshots(actorId, runId);
+  const decisions = store.listActorDecisionCache(actorId, runId);
 
   // 3. Get provenance if entity_id exists
   let provenance: unknown;
@@ -167,6 +209,9 @@ export function exportAgent(
     version: "0.1.0",
     exported_at: new Date().toISOString(),
     memories_exported: memories.length,
+    posts_exported: posts.length,
+    exposures_exported: exposures.length,
+    decisions_exported: decisions.length,
   };
 
   // 7. Write files (scrub secrets from all JSON)
@@ -176,6 +221,9 @@ export function exportAgent(
     "beliefs.json",
     "topics.json",
     "memories.json",
+    "posts.json",
+    "exposures.json",
+    "decisions.json",
     "provenance.json",
     "persona.md",
     "manifest.meta.json",
@@ -203,6 +251,21 @@ export function exportAgent(
     "utf-8",
   );
   writeFileSync(
+    join(outDir, "posts.json"),
+    JSON.stringify(scrubSecrets(posts.map(toPortablePost)), null, 2),
+    "utf-8",
+  );
+  writeFileSync(
+    join(outDir, "exposures.json"),
+    JSON.stringify(scrubSecrets(exposures.map(toPortableExposure)), null, 2),
+    "utf-8",
+  );
+  writeFileSync(
+    join(outDir, "decisions.json"),
+    JSON.stringify(scrubSecrets(decisions.map(toPortableDecision)), null, 2),
+    "utf-8",
+  );
+  writeFileSync(
     join(outDir, "provenance.json"),
     JSON.stringify(scrubSecrets(provenance), null, 2),
     "utf-8",
@@ -218,7 +281,15 @@ export function exportAgent(
     "utf-8",
   );
 
-  return { actorId, outDir, files, memoriesExported: memories.length };
+  return {
+    actorId,
+    outDir,
+    files,
+    memoriesExported: memories.length,
+    postsExported: posts.length,
+    exposuresExported: exposures.length,
+    decisionsExported: decisions.length,
+  };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -260,6 +331,18 @@ export function importAgent(
   const memoriesPath = join(bundleDir, "memories.json");
   const memories = existsSync(memoriesPath)
     ? (JSON.parse(readFileSync(memoriesPath, "utf-8")) as PortableActorMemory[])
+    : [];
+  const postsPath = join(bundleDir, "posts.json");
+  const posts = existsSync(postsPath)
+    ? (JSON.parse(readFileSync(postsPath, "utf-8")) as PortableActorPost[])
+    : [];
+  const exposuresPath = join(bundleDir, "exposures.json");
+  const exposures = existsSync(exposuresPath)
+    ? (JSON.parse(readFileSync(exposuresPath, "utf-8")) as PortableActorExposure[])
+    : [];
+  const decisionsPath = join(bundleDir, "decisions.json");
+  const decisions = existsSync(decisionsPath)
+    ? (JSON.parse(readFileSync(decisionsPath, "utf-8")) as PortableDecisionTrace[])
     : [];
 
   // Read persona.md if it exists
@@ -327,6 +410,51 @@ export function importAgent(
     });
   }
 
+  for (const post of posts) {
+    store.addActorMemory({
+      id: uuid(),
+      run_id: runId,
+      actor_id: newId,
+      round_num: Number.isFinite(post.round_num) ? post.round_num : 0,
+      kind: "reflection",
+      summary: summarizePortablePost(post),
+      salience: derivePortablePostSalience(post),
+      topic: post.topics[0] ?? null,
+      source_post_id: null,
+      source_actor_id: null,
+    });
+  }
+
+  for (const exposure of exposures) {
+    store.addActorMemory({
+      id: uuid(),
+      run_id: runId,
+      actor_id: newId,
+      round_num: Number.isFinite(exposure.round_num) ? exposure.round_num : 0,
+      kind: "interaction",
+      summary: summarizePortableExposure(exposure),
+      salience: derivePortableExposureSalience(exposure),
+      topic: exposure.post_topics[0] ?? null,
+      source_post_id: null,
+      source_actor_id: null,
+    });
+  }
+
+  for (const decision of decisions) {
+    store.addActorMemory({
+      id: uuid(),
+      run_id: runId,
+      actor_id: newId,
+      round_num: Number.isFinite(decision.round_num) ? decision.round_num : 0,
+      kind: "reflection",
+      summary: summarizePortableDecision(decision),
+      salience: derivePortableDecisionSalience(decision),
+      topic: decision.topics?.[0] ?? null,
+      source_post_id: null,
+      source_actor_id: null,
+    });
+  }
+
   // 9. Return result
   return {
     actorId: newId,
@@ -334,6 +462,9 @@ export function importAgent(
     topicsImported: topics.length,
     beliefsImported: beliefs.length,
     memoriesImported: memories.length,
+    postsImported: posts.length,
+    exposuresImported: exposures.length,
+    decisionsImported: decisions.length,
   };
 }
 
@@ -348,6 +479,54 @@ type PortableActorMemory = {
   created_at?: string;
 };
 
+type PortableActorPost = {
+  id: string;
+  round_num: number;
+  sim_timestamp: string;
+  post_kind: "post" | "comment" | "repost" | "quote";
+  content: string;
+  reply_to?: string | null;
+  quote_of?: string | null;
+  likes: number;
+  reposts: number;
+  comments: number;
+  reach: number;
+  sentiment?: number | null;
+  is_deleted?: boolean;
+  deleted_at?: string | null;
+  moderation_status?: "none" | "flagged" | "shadowed";
+  topics: string[];
+};
+
+type PortableActorExposure = {
+  actor_id: string;
+  post_id: string;
+  round_num: number;
+  reaction: "seen" | "liked" | "commented" | "reposted";
+  post_author_id: string;
+  post_content: string;
+  post_topics: string[];
+  post_kind?: "post" | "comment" | "repost" | "quote";
+  post_sentiment?: number | null;
+  post_sim_timestamp: string;
+};
+
+type PortableDecisionTrace = {
+  round_num: number;
+  model_id: string;
+  prompt_version: string;
+  request_hash: string;
+  action?: string;
+  target?: string;
+  content?: string;
+  reasoning?: string;
+  raw_response?: string;
+  tokens_input?: number | null;
+  tokens_output?: number | null;
+  duration_ms?: number | null;
+  topics?: string[];
+};
+
 function toPortableMemory(memory: ActorMemoryRow): PortableActorMemory {
   return {
     kind: memory.kind,
@@ -359,6 +538,172 @@ function toPortableMemory(memory: ActorMemoryRow): PortableActorMemory {
     source_actor_id: memory.source_actor_id ?? null,
     created_at: memory.created_at,
   };
+}
+
+function toPortablePost(post: ActorPostSnapshot): PortableActorPost {
+  return {
+    id: post.id,
+    round_num: post.round_num,
+    sim_timestamp: post.sim_timestamp,
+    post_kind: post.post_kind ?? "post",
+    content: post.content,
+    reply_to: post.reply_to ?? null,
+    quote_of: post.quote_of ?? null,
+    likes: post.likes,
+    reposts: post.reposts,
+    comments: post.comments,
+    reach: post.reach,
+    sentiment: post.sentiment ?? null,
+    is_deleted: Boolean(post.is_deleted),
+    deleted_at: post.deleted_at ?? null,
+    moderation_status: post.moderation_status ?? "none",
+    topics: post.topics,
+  };
+}
+
+function toPortableExposure(exposure: ActorExposureSnapshot): PortableActorExposure {
+  return {
+    actor_id: exposure.actor_id,
+    post_id: exposure.post_id,
+    round_num: exposure.round_num,
+    reaction: exposure.reaction,
+    post_author_id: exposure.post_author_id,
+    post_content: exposure.post_content,
+    post_topics: exposure.post_topics,
+    post_kind: exposure.post_kind ?? "post",
+    post_sentiment: exposure.post_sentiment ?? null,
+    post_sim_timestamp: exposure.post_sim_timestamp,
+  };
+}
+
+function toPortableDecision(entry: DecisionCacheRow): PortableDecisionTrace {
+  const parsed = parseDecisionTrace(entry.parsed_decision);
+  return {
+    round_num: entry.round_num,
+    model_id: entry.model_id,
+    prompt_version: entry.prompt_version,
+    request_hash: entry.request_hash,
+    action: parsed.action,
+    target: parsed.target,
+    content: parsed.content,
+    reasoning: parsed.reasoning,
+    raw_response: entry.raw_response,
+    tokens_input: entry.tokens_input ?? null,
+    tokens_output: entry.tokens_output ?? null,
+    duration_ms: entry.duration_ms ?? null,
+    topics: inferTopicsFromDecision(parsed),
+  };
+}
+
+function parseDecisionTrace(
+  parsedDecision: string
+): Partial<{
+  action: string;
+  target: string;
+  content: string;
+  reasoning: string;
+}> {
+  try {
+    const parsed = JSON.parse(parsedDecision) as Record<string, unknown>;
+    return {
+      action: typeof parsed.action === "string" ? parsed.action : undefined,
+      target: typeof parsed.target === "string" ? parsed.target : undefined,
+      content: typeof parsed.content === "string" ? parsed.content : undefined,
+      reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function inferTopicsFromDecision(
+  parsed: Partial<{
+    content: string;
+    reasoning: string;
+  }>
+): string[] {
+  const text = [parsed.content, parsed.reasoning]
+    .filter((value): value is string => Boolean(value))
+    .join(" ")
+    .toLowerCase();
+  if (!text) return [];
+
+  const tokens = text
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4);
+  return [...new Set(tokens)].slice(0, 3);
+}
+
+function summarizePortablePost(post: PortableActorPost): string {
+  const snippet = truncate(post.content, 120);
+  if (post.post_kind === "quote") {
+    return `You published a quote post in round ${post.round_num}: "${snippet}"`;
+  }
+  if (post.post_kind === "repost") {
+    return `You reposted content in round ${post.round_num}: "${snippet}"`;
+  }
+  if (post.post_kind === "comment") {
+    return `You commented in round ${post.round_num}: "${snippet}"`;
+  }
+  return `You authored a post in round ${post.round_num}: "${snippet}"`;
+}
+
+function derivePortablePostSalience(post: PortableActorPost): number {
+  const engagement = post.likes + post.reposts * 2 + post.comments * 2;
+  return clamp(0.45 + Math.min(0.35, engagement * 0.02) + Math.min(0.2, post.reach * 0.0015));
+}
+
+function summarizePortableExposure(exposure: PortableActorExposure): string {
+  const snippet = truncate(exposure.post_content, 110);
+  return `You ${exposure.reaction} a ${exposure.post_kind ?? "post"} from ${exposure.post_author_id} in round ${exposure.round_num}: "${snippet}"`;
+}
+
+function derivePortableExposureSalience(exposure: PortableActorExposure): number {
+  const reactionWeight =
+    exposure.reaction === "reposted"
+      ? 0.95
+      : exposure.reaction === "commented"
+        ? 0.85
+        : exposure.reaction === "liked"
+          ? 0.72
+          : 0.55;
+  return clamp(reactionWeight + (exposure.post_sentiment ? Math.min(0.05, Math.abs(exposure.post_sentiment) * 0.05) : 0));
+}
+
+function summarizePortableDecision(decision: PortableDecisionTrace): string {
+  const action = decision.action ?? "act";
+  const reason = decision.reasoning?.trim();
+  if (reason) {
+    return `Decision trace from round ${decision.round_num}: ${truncate(reason, 160)}`;
+  }
+  if (decision.content?.trim()) {
+    return `Decision trace from round ${decision.round_num}: you chose ${action} with content "${truncate(decision.content, 110)}"`;
+  }
+  if (decision.target) {
+    return `Decision trace from round ${decision.round_num}: you chose ${action} targeting ${decision.target}.`;
+  }
+  return `Decision trace from round ${decision.round_num}: you chose ${action}.`;
+}
+
+function derivePortableDecisionSalience(decision: PortableDecisionTrace): number {
+  const activeAction = decision.action && decision.action !== "idle" ? 0.8 : 0.58;
+  const durationBoost = decision.duration_ms ? Math.min(0.08, decision.duration_ms / 20000) : 0;
+  const tokenBoost =
+    (decision.tokens_input ?? 0) + (decision.tokens_output ?? 0) > 0
+      ? Math.min(0.07, ((decision.tokens_input ?? 0) + (decision.tokens_output ?? 0)) / 12000)
+      : 0;
+  return clamp(activeAction + durationBoost + tokenBoost);
+}
+
+function truncate(text: string, maxLength: number): string {
+  const trimmed = String(text ?? "").trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  return trimmed.slice(0, maxLength - 3) + "...";
+}
+
+function clamp(value: number): number {
+  return Math.max(0, Math.min(0.99, value));
 }
 
 function isPortableMemoryKind(

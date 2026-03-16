@@ -207,6 +207,41 @@ export interface Exposure {
   reaction: "seen" | "liked" | "commented" | "reposted";
 }
 
+export interface ActorPostSnapshot {
+  id: string;
+  run_id: string;
+  author_id: string;
+  content: string;
+  reply_to?: string | null;
+  quote_of?: string | null;
+  post_kind?: Post["post_kind"];
+  round_num: number;
+  sim_timestamp: string;
+  likes: number;
+  reposts: number;
+  comments: number;
+  reach: number;
+  sentiment?: number | null;
+  is_deleted?: number;
+  deleted_at?: string | null;
+  moderation_status?: Post["moderation_status"];
+  topics: string[];
+}
+
+export interface ActorExposureSnapshot {
+  actor_id: string;
+  post_id: string;
+  round_num: number;
+  run_id: string;
+  reaction: Exposure["reaction"];
+  post_author_id: string;
+  post_content: string;
+  post_topics: string[];
+  post_kind: Post["post_kind"];
+  post_sentiment?: number | null;
+  post_sim_timestamp: string;
+}
+
 export interface Follow {
   follower_id: string;
   following_id: string;
@@ -288,6 +323,21 @@ export interface SearchCacheRow {
   results: string;
   fetched_at?: string;
   run_id?: string | null;
+}
+
+export interface DecisionCacheRow {
+  id: string;
+  run_id: string;
+  round_num: number;
+  actor_id: string;
+  request_hash: string;
+  raw_response: string;
+  parsed_decision: string;
+  model_id: string;
+  prompt_version: string;
+  tokens_input?: number | null;
+  tokens_output?: number | null;
+  duration_ms?: number | null;
 }
 
 export interface SearchRequestRow {

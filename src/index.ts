@@ -1005,6 +1005,9 @@ export function createProgram(io: CliIO = defaultIO): Command {
         io.stdout(`Exported ${actor.name} to ${result.outDir}\n`);
         io.stdout(`  Files: ${result.files.join(", ")}\n`);
         io.stdout(`  Memories: ${result.memoriesExported}\n`);
+        io.stdout(`  Posts: ${result.postsExported}\n`);
+        io.stdout(`  Exposures: ${result.exposuresExported}\n`);
+        io.stdout(`  Decisions: ${result.decisionsExported}\n`);
       } finally {
         store.close();
       }
@@ -1029,7 +1032,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
         const result = importAgent(store, runId, opts.bundle);
         io.stdout(`Imported ${result.name} (${result.actorId})\n`);
         io.stdout(
-          `  Topics: ${result.topicsImported}, Beliefs: ${result.beliefsImported}, Memories: ${result.memoriesImported}\n`
+          `  Topics: ${result.topicsImported}, Beliefs: ${result.beliefsImported}, Memories: ${result.memoriesImported}, Posts: ${result.postsImported}, Exposures: ${result.exposuresImported}, Decisions: ${result.decisionsImported}\n`
         );
       } finally {
         store.close();
