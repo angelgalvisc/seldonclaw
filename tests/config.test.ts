@@ -17,6 +17,7 @@ import {
   deriveActivationConfig,
   ConfigError,
 } from "../src/config.js";
+import { resolveProviderConfig } from "../src/provider-selection.js";
 
 describe("config.ts", () => {
   // ─── Default config ───
@@ -41,8 +42,10 @@ describe("config.ts", () => {
       expect(config.cognition.tierC.likeProb).toBe(0.6);
       expect(config.cognition.interactionLookback).toBe(5);
 
-      expect(config.providers.analysis.sdk).toBe("anthropic");
-      expect(config.providers.analysis.model).toBe("claude-sonnet-4-20250514");
+      expect(config.providers.default.provider).toBe("anthropic");
+      expect(config.providers.default.sdk).toBe("anthropic");
+      expect(config.providers.default.model).toBe("claude-sonnet-4-6");
+      expect(resolveProviderConfig(config.providers, "analysis").model).toBe("claude-sonnet-4-6");
 
       expect(config.feed.size).toBe(20);
       expect(config.feed.recencyWeight + config.feed.popularityWeight + config.feed.relevanceWeight).toBeCloseTo(1.0);
@@ -198,6 +201,7 @@ output:
       expect(config.cognition.tierA.archetypeOverrides).toContain("media");
       expect(config.search.cutoffDate).toBe("2026-03-01");
       expect(config.search.allowArchetypes).toEqual(["media"]);
+      expect(resolveProviderConfig(config.providers, "report").provider).toBe("anthropic");
     });
   });
 
@@ -367,13 +371,16 @@ simulation:
   describe("sanitizeForStorage", () => {
     it("redacts apiKeyEnv values", () => {
       const config = defaultConfig();
+      config.providers.overrides.report = {
+        provider: "openai",
+        model: "gpt-5-mini-2025-08-07",
+        apiKeyEnv: "OPENAI_API_KEY",
+      };
       const sanitized = sanitizeForStorage(config);
       const parsed = JSON.parse(sanitized);
 
-      expect(parsed.providers.analysis.apiKeyEnv).toBe("[REDACTED]");
-      expect(parsed.providers.generation.apiKeyEnv).toBe("[REDACTED]");
-      expect(parsed.providers.simulation.apiKeyEnv).toBe("[REDACTED]");
-      expect(parsed.providers.report.apiKeyEnv).toBe("[REDACTED]");
+      expect(parsed.providers.default.apiKeyEnv).toBe("[REDACTED]");
+      expect(parsed.providers.overrides.report.apiKeyEnv).toBe("[REDACTED]");
     });
 
     it("does not modify the original config", () => {
@@ -381,7 +388,7 @@ simulation:
       sanitizeForStorage(config);
 
       // Original should be unchanged
-      expect(config.providers.analysis.apiKeyEnv).toBe("ANTHROPIC_API_KEY");
+      expect(config.providers.default.apiKeyEnv).toBe("ANTHROPIC_API_KEY");
     });
   });
 

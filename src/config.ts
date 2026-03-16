@@ -7,10 +7,18 @@
  * strips secrets for storage in run_manifest.config_snapshot.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import YAML from "yaml";
 import type { FeedAlgorithm, PlatformAction, PlatformPolicyConfig } from "./platform.js";
 import { DEFAULT_PLATFORM_POLICY, PLATFORM_ACTIONS } from "./platform.js";
+import {
+  PROVIDER_ROLES,
+  normalizeProvidersConfig,
+  resolveProviderConfig,
+  type ProviderConfig,
+  type ProviderRole,
+  type ProvidersConfig,
+} from "./provider-selection.js";
 
 // ═══════════════════════════════════════════════════════
 // CONFIG TYPES — from PLAN.md §SimConfig
@@ -56,19 +64,6 @@ export interface CognitionConfig {
     likeProb: number;
   };
   interactionLookback: number;
-}
-
-export interface ProviderConfig {
-  sdk?: string;
-  model: string;
-  apiKeyEnv: string;
-}
-
-export interface ProvidersConfig {
-  analysis: ProviderConfig;
-  generation: ProviderConfig;
-  simulation: ProviderConfig;
-  report: ProviderConfig;
 }
 
 export interface FeedConfig {
@@ -196,25 +191,13 @@ const DEFAULTS: SimConfig = {
     interactionLookback: 5,
   },
   providers: {
-    analysis: {
+    default: {
+      provider: "anthropic",
       sdk: "anthropic",
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-6",
       apiKeyEnv: "ANTHROPIC_API_KEY",
     },
-    generation: {
-      sdk: "anthropic",
-      model: "claude-sonnet-4-20250514",
-      apiKeyEnv: "ANTHROPIC_API_KEY",
-    },
-    simulation: {
-      model: "claude-haiku-4-20250414",
-      apiKeyEnv: "ANTHROPIC_API_KEY",
-    },
-    report: {
-      sdk: "anthropic",
-      model: "claude-sonnet-4-20250514",
-      apiKeyEnv: "ANTHROPIC_API_KEY",
-    },
+    overrides: {},
   },
   platform: structuredClone(DEFAULT_PLATFORM_POLICY),
   search: {
@@ -325,7 +308,22 @@ export function defaultConfig(): SimConfig {
   return structuredClone(DEFAULTS);
 }
 
+export function saveConfig(filePath: string, config: SimConfig): void {
+  validateConfig(config);
+  writeFileSync(
+    filePath,
+    YAML.stringify(config, {
+      lineWidth: 0,
+      defaultKeyType: "PLAIN",
+      defaultStringType: "QUOTE_DOUBLE",
+    }),
+    "utf-8"
+  );
+}
+
 function normalizeConfig(config: SimConfig, parsed: Partial<SimConfig>): SimConfig {
+  config.providers = normalizeProvidersConfig(parsed.providers ?? config.providers, DEFAULTS.providers);
+
   if (!parsed.platform?.name && parsed.simulation?.platform) {
     config.platform.name = parsed.simulation.platform;
   }
@@ -350,11 +348,10 @@ function normalizeConfig(config: SimConfig, parsed: Partial<SimConfig>): SimConf
 export function sanitizeForStorage(config: SimConfig): string {
   const sanitized = structuredClone(config);
 
-  // Strip API key env names (they reference env vars, not actual keys)
-  // But still redact to avoid leaking which env vars hold keys
-  for (const [, provider] of Object.entries(sanitized.providers)) {
-    if (provider && typeof provider === "object" && "apiKeyEnv" in provider) {
-      (provider as ProviderConfig).apiKeyEnv = "[REDACTED]";
+  sanitized.providers.default.apiKeyEnv = "[REDACTED]";
+  for (const role of PROVIDER_ROLES) {
+    if (sanitized.providers.overrides[role]?.apiKeyEnv) {
+      sanitized.providers.overrides[role]!.apiKeyEnv = "[REDACTED]";
     }
   }
 
@@ -377,6 +374,29 @@ export class ConfigError extends Error {
 
 function validateConfig(config: SimConfig): void {
   const errors: ConfigError[] = [];
+
+  for (const role of PROVIDER_ROLES) {
+    const provider = resolveProviderConfig(config.providers, role);
+    if (!provider.provider) {
+      errors.push(
+        new ConfigError(
+          'provider must be "anthropic", "openai", or "moonshot"',
+          `providers.${role}.provider`
+        )
+      );
+    }
+    if (!provider.model.trim()) {
+      errors.push(new ConfigError("model must not be empty", `providers.${role}.model`));
+    }
+    if (!provider.apiKeyEnv.trim()) {
+      errors.push(new ConfigError("apiKeyEnv must not be empty", `providers.${role}.apiKeyEnv`));
+    }
+    if (provider.baseUrl && !/^https?:\/\//.test(provider.baseUrl)) {
+      errors.push(
+        new ConfigError("baseUrl must start with http:// or https://", `providers.${role}.baseUrl`)
+      );
+    }
+  }
 
   // Simulation
   if (config.simulation.seed < 0) {

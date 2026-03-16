@@ -14,12 +14,12 @@
 import { Command } from "commander";
 import { pathToFileURL } from "node:url";
 import { SQLiteGraphStore, uuid } from "./db.js";
-import { loadConfig, defaultConfig, sanitizeForStorage } from "./config.js";
+import { loadConfig, defaultConfig, sanitizeForStorage, saveConfig } from "./config.js";
 import type { SimConfig } from "./config.js";
 import { DirectLLMBackend, MockCognitionBackend, getPromptVersion } from "./cognition.js";
 import { runSimulation } from "./engine.js";
 import { getTierStats } from "./telemetry.js";
-import { LLMClient, MockLLMClient } from "./llm.js";
+import { LLMClient, MockLLMClient, validateProviderConnection } from "./llm.js";
 import { interviewActor, resolveActorByName, formatActorContext } from "./interview.js";
 import { exportAgent, importAgent } from "./ckp.js";
 import { generateReport } from "./report.js";
@@ -33,6 +33,24 @@ import { checkSearchHealth, createSearchProvider } from "./search.js";
 import type { RunManifest } from "./db.js";
 import { existsSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
+import {
+  SUPPORTED_PROVIDERS,
+  describeConfiguredModel,
+  getProviderCatalog,
+  getRecommendedModel,
+  normalizeModelId,
+  parseProvider,
+  resolveModelPreset,
+  type SupportedProvider,
+} from "./model-catalog.js";
+import { loadEnvFile, upsertEnvVar } from "./env.js";
+import {
+  PROVIDER_ROLES,
+  createProviderConfig,
+  resolveProviderConfig,
+  setRoleProviderSelection,
+  type ProviderRole,
+} from "./provider-selection.js";
 
 export interface CliIO {
   stdout: (text: string) => void;
@@ -41,6 +59,7 @@ export interface CliIO {
 
 export interface PromptSession {
   ask: (question: string, defaultValue?: string) => Promise<string>;
+  askSecret?: (question: string) => Promise<string>;
   close: () => void;
 }
 
@@ -64,6 +83,16 @@ function parseIntOption(value: string, field: string): number {
 
 function getConfig(configPath?: string): SimConfig {
   return configPath ? loadConfig(configPath) : defaultConfig();
+}
+
+async function ensureConfigFile(
+  configPath: string,
+  io: CliIO,
+  promptSession?: PromptSession
+): Promise<void> {
+  if (existsSync(configPath)) return;
+  io.stdout(`No config found at ${configPath}. Starting first-run setup.\n\n`);
+  await runInitCommand({ output: configPath }, io, promptSession);
 }
 
 function createCliLlm(
@@ -116,6 +145,16 @@ function createCliLlm(
           warnings: [],
         })
       );
+    }
+    if (options.feature === "shell") {
+      llm.setResponse("how many actors", "SELECT COUNT(*) as total FROM actors");
+      llm.setResponse("count actors", "SELECT COUNT(*) as total FROM actors");
+      llm.setResponse("list actors", "SELECT name, handle, cognition_tier FROM actors ORDER BY name LIMIT 10");
+      llm.setResponse("show actors", "SELECT name, handle, cognition_tier FROM actors ORDER BY name LIMIT 10");
+      llm.setResponse("how many posts", "SELECT COUNT(*) as total FROM posts");
+      llm.setResponse("count posts", "SELECT COUNT(*) as total FROM posts");
+      llm.setResponse("latest posts", "SELECT author_id, content, round_num FROM posts ORDER BY round_num DESC, id DESC LIMIT 10");
+      llm.setResponse("recent posts", "SELECT author_id, content, round_num FROM posts ORDER BY round_num DESC, id DESC LIMIT 10");
     }
     return llm;
   }
@@ -229,115 +268,181 @@ function createPromptSession(): PromptSession {
         });
         rl.once("close", () => reject(new Error("Prompt closed")));
       }),
+    askSecret: (question) =>
+      new Promise<string>((resolve, reject) => {
+        const stdin = process.stdin;
+        const stdout = process.stdout;
+        const wasRaw = Boolean((stdin as NodeJS.ReadStream).isRaw);
+        let value = "";
+
+        stdout.write(`${question}: `);
+        stdin.resume();
+        if (stdin.isTTY) stdin.setRawMode?.(true);
+        stdin.setEncoding("utf8");
+
+        const onData = (char: string) => {
+          if (char === "\u0003") {
+            cleanup();
+            reject(new Error("Prompt interrupted"));
+            return;
+          }
+          if (char === "\r" || char === "\n") {
+            stdout.write("\n");
+            cleanup();
+            resolve(value.trim());
+            return;
+          }
+          if (char === "\u007f") {
+            value = value.slice(0, -1);
+            return;
+          }
+          value += char;
+        };
+
+        const cleanup = () => {
+          stdin.off("data", onData);
+          if (stdin.isTTY) stdin.setRawMode?.(wasRaw);
+        };
+
+        stdin.on("data", onData);
+      }),
     close: () => rl.close(),
   };
 }
 
 interface InitAnswers {
+  provider: SupportedProvider;
   simulationModel: string;
   reportModel: string;
   apiKeyEnv: string;
+  baseUrl?: string;
+  apiKeyValue?: string;
   outputDir: string;
   timezone: string;
   searchEnabled: boolean;
   searchEndpoint: string;
   searchCutoffDate: string;
+  advanced: boolean;
 }
 
-function renderInitConfig(answers: InitAnswers): string {
-  return [
-    "# PublicMachina Configuration",
-    "# Generated by: publicmachina init",
-    "",
-    "simulation:",
-    '  platform: "x"',
-    "  totalHours: 24",
-    "  minutesPerRound: 60",
-    `  timezone: "${answers.timezone}"`,
-    "  concurrency: 1",
-    '  timeAccelerationMode: "off"',
-    "  maxFastForwardRounds: 24",
-    "  seed: 42",
-    "  snapshotEvery: 10",
-    "",
-    "platform:",
-    '  name: "x"',
-    "  features:",
-    "    upvoteDownvote: false",
-    "    threads: false",
-    "    characterLimit: 280",
-    "    anonymousPosting: false",
-    "    communitiesUserCreated: false",
-    "  actions: [post, comment, repost, quote, like, unlike, follow, unfollow, mute, block, report, delete, search, idle]",
-    '  recsys: "hybrid"',
-    "  tierAllowedActions:",
-    "    A: [post, comment, repost, quote, like, unlike, follow, unfollow, mute, block, report, delete, search, idle]",
-    "    B: [post, comment, repost, quote, like, unlike, follow, unfollow, mute, report, delete, search, idle]",
-    "    C: [post, comment, repost, like, follow, unfollow, idle]",
-    "  moderation:",
-    "    enabled: true",
-    "    reportThreshold: 3",
-    "    shadowBanOnThreshold: true",
-    "",
-    "feed:",
-    '  algorithm: "hybrid"',
-    "  size: 20",
-    "  recencyWeight: 0.4",
-    "  popularityWeight: 0.3",
-    "  relevanceWeight: 0.3",
-    "  echoChamberStrength: 0.5",
-    "  traceWeight: 0.25",
-    "  outOfNetworkRatio: 0.35",
-    "  diversityWeight: 0.2",
-    "  embeddingEnabled: false",
-    "  embeddingWeight: 0.25",
-    '  embeddingModel: "hash-embedding-v1"',
-    "  embeddingDimensions: 32",
-    "",
-    "providers:",
-    "  analysis:",
-    '    sdk: "anthropic"',
-    `    model: "${answers.simulationModel}"`,
-    `    apiKeyEnv: "${answers.apiKeyEnv}"`,
-    "  generation:",
-    '    sdk: "anthropic"',
-    `    model: "${answers.simulationModel}"`,
-    `    apiKeyEnv: "${answers.apiKeyEnv}"`,
-    "  simulation:",
-    `    model: "${answers.simulationModel}"`,
-    `    apiKeyEnv: "${answers.apiKeyEnv}"`,
-    "  report:",
-    '    sdk: "anthropic"',
-    `    model: "${answers.reportModel}"`,
-    `    apiKeyEnv: "${answers.apiKeyEnv}"`,
-    "",
-    "search:",
-    `  enabled: ${answers.searchEnabled ? "true" : "false"}`,
-    `  endpoint: "${answers.searchEndpoint}"`,
-    `  cutoffDate: "${answers.searchCutoffDate}"`,
-    "  strictCutoff: true",
-    '  enabledTiers: ["A", "B"]',
-    "  maxActorsPerRound: 4",
-    "  maxActorsByTier:",
-    "    A: 2",
-    "    B: 2",
-    "  allowArchetypes: []",
-    "  denyArchetypes: []",
-    "  allowProfessions: []",
-    "  denyProfessions: []",
-    "  allowActors: []",
-    "  denyActors: []",
-    "  maxResultsPerQuery: 5",
-    "  maxQueriesPerActor: 2",
-    '  categories: "news"',
-    '  defaultLanguage: "auto"',
-    "  timeoutMs: 3000",
-    "",
-    "output:",
-    `  dir: "${answers.outputDir}"`,
-    '  format: "markdown"',
-    "",
-  ].join("\n");
+const DEFAULT_CONFIG_PATH = "publicmachina.config.yaml";
+
+function askYesNoAnswer(value: string | undefined, defaultValue = true): boolean {
+  const trimmed = value?.trim().toLowerCase();
+  if (!trimmed) return defaultValue;
+  return /^(y|yes|true|1)$/i.test(trimmed);
+}
+
+async function askYesNo(
+  prompt: PromptSession,
+  question: string,
+  defaultValue = true
+): Promise<boolean> {
+  const answer = await prompt.ask(question, defaultValue ? "yes" : "no");
+  return askYesNoAnswer(answer, defaultValue);
+}
+
+async function askProvider(
+  prompt: PromptSession,
+  defaultProvider: SupportedProvider
+): Promise<SupportedProvider> {
+  const options = SUPPORTED_PROVIDERS
+    .map((provider, index) => {
+      const entry = getProviderCatalog(provider);
+      const recommended = provider === defaultProvider ? " (Recommended)" : "";
+      return `  ${index + 1}. ${entry.label}${recommended} — ${entry.description}`;
+    })
+    .join("\n");
+
+  while (true) {
+    const answer = await prompt.ask(
+      `Choose provider:\n${options}\nEnter name or number`,
+      defaultProvider
+    );
+    const numeric = parseInt(answer, 10);
+    if (!Number.isNaN(numeric) && numeric >= 1 && numeric <= SUPPORTED_PROVIDERS.length) {
+      return SUPPORTED_PROVIDERS[numeric - 1];
+    }
+    const parsed = parseProvider(answer);
+    if (parsed) return parsed;
+  }
+}
+
+async function askModel(
+  prompt: PromptSession,
+  provider: SupportedProvider,
+  defaultModelId?: string
+): Promise<string> {
+  const entry = getProviderCatalog(provider);
+  const options = entry.models
+    .map((model, index) => {
+      const recommended = model.tier === "recommended" ? " (Recommended)" : "";
+      const tierLabel =
+        model.tier === "best"
+          ? "Best quality"
+          : model.tier === "fast"
+            ? "Fast / lower cost"
+            : "Balanced default";
+      return `  ${index + 1}. ${model.label}${recommended} — ${tierLabel}`;
+    })
+    .concat(`  ${entry.models.length + 1}. Custom model ID`)
+    .join("\n");
+
+  const defaultDisplay = defaultModelId
+    ? describeConfiguredModel(provider, defaultModelId)
+    : getRecommendedModel(provider).label;
+
+  while (true) {
+    const answer = await prompt.ask(
+      `Choose ${entry.label} model:\n${options}\nEnter name or number`,
+      defaultDisplay
+    );
+    const numeric = parseInt(answer, 10);
+    if (!Number.isNaN(numeric)) {
+      if (numeric >= 1 && numeric <= entry.models.length) {
+        return normalizeModelId(provider, entry.models[numeric - 1].id);
+      }
+      if (numeric === entry.models.length + 1) {
+        const custom = await prompt.ask("Custom model ID");
+        if (custom.trim()) return custom.trim();
+      }
+    }
+
+    const preset = resolveModelPreset(provider, answer);
+    if (preset) {
+      return normalizeModelId(provider, preset.id);
+    }
+    if (answer.trim()) {
+      return answer.trim();
+    }
+  }
+}
+
+function buildInitConfig(answers: InitAnswers): SimConfig {
+  const config = defaultConfig();
+  config.simulation.totalHours = 24;
+  config.simulation.timezone = answers.timezone;
+  config.output.dir = answers.outputDir;
+  config.output.format = "markdown";
+  config.search.enabled = answers.searchEnabled;
+  config.search.endpoint = answers.searchEndpoint;
+  config.search.cutoffDate = answers.searchCutoffDate;
+  config.providers.default = createProviderConfig(answers.provider, answers.simulationModel, {
+    apiKeyEnv: answers.apiKeyEnv,
+    ...(answers.baseUrl ? { baseUrl: answers.baseUrl } : {}),
+  });
+  config.providers.overrides = {};
+
+  if (answers.reportModel && answers.reportModel !== answers.simulationModel) {
+    config.providers = setRoleProviderSelection(config.providers, "report", {
+      provider: answers.provider,
+      model: answers.reportModel,
+      apiKeyEnv: answers.apiKeyEnv,
+      ...(answers.baseUrl ? { baseUrl: answers.baseUrl } : {}),
+    });
+  }
+
+  return config;
 }
 
 export async function runInitCommand(
@@ -356,35 +461,55 @@ export async function runInitCommand(
     io.stderr(`Warning: Node ${nodeVersion} detected. Node >= 18 is recommended.\n`);
   }
 
-  const defaults = {
-    simulationModel: "claude-haiku-4-20250414",
-    reportModel: "claude-sonnet-4-20250514",
-    apiKeyEnv: "ANTHROPIC_API_KEY",
+  const defaultProvider: SupportedProvider = "anthropic";
+  const defaults: InitAnswers = {
+    provider: defaultProvider,
+    simulationModel: normalizeModelId(defaultProvider, getRecommendedModel(defaultProvider).id),
+    reportModel: normalizeModelId(defaultProvider, getRecommendedModel(defaultProvider).id),
+    apiKeyEnv: getProviderCatalog(defaultProvider).apiKeyEnv,
+    baseUrl: getProviderCatalog(defaultProvider).baseUrl,
+    apiKeyValue: undefined,
     outputDir: "./output",
     timezone: defaultConfig().simulation.timezone,
     searchEnabled: false,
     searchEndpoint: defaultConfig().search.endpoint,
     searchCutoffDate: defaultConfig().search.cutoffDate,
+    advanced: false,
   };
 
   let answers: InitAnswers = defaults;
   let prompt = promptSession;
+  let createdPrompt = false;
 
   if (!opts.yes && (process.stdin.isTTY || promptSession)) {
-    prompt ??= createPromptSession();
+    if (!prompt) {
+      prompt = createPromptSession();
+      createdPrompt = true;
+    }
     try {
       io.stdout("PublicMachina setup\n");
-      const enableSearchAnswer = await prompt.ask(
-        "Enable SearXNG web search (yes/no)",
-        defaults.searchEnabled ? "yes" : "no"
-      );
-      const searchEnabled = parseBooleanAnswer(enableSearchAnswer);
+      io.stdout("This wizard configures a real provider first. Mock mode remains available for demos and CI.\n\n");
+
+      const provider = await askProvider(prompt, defaults.provider);
+      const providerEntry = getProviderCatalog(provider);
+      const simulationModel = await askModel(prompt, provider, defaults.simulationModel);
+      const advanced = await askYesNo(prompt, "Advanced setup (separate report model)?", false);
+      const reportModel = advanced
+        ? await askModel(prompt, provider, simulationModel)
+        : simulationModel;
+      const apiKeyValue = (await (prompt.askSecret?.(`Paste your ${providerEntry.label} API key now (leave blank to skip)`)
+        ?? prompt.ask(`Paste your ${providerEntry.label} API key now (leave blank to skip)`))).trim();
+      const searchEnabled = await askYesNo(prompt, "Enable SearXNG web search now?", defaults.searchEnabled);
+
       answers = {
-        simulationModel: await prompt.ask("Simulation model", defaults.simulationModel),
-        reportModel: await prompt.ask("Report model", defaults.reportModel),
-        apiKeyEnv: await prompt.ask("API key env var", defaults.apiKeyEnv),
-        outputDir: await prompt.ask("Output directory", defaults.outputDir),
-        timezone: await prompt.ask("Timezone", defaults.timezone),
+        provider,
+        simulationModel,
+        reportModel,
+        apiKeyEnv: providerEntry.apiKeyEnv,
+        baseUrl: providerEntry.baseUrl,
+        apiKeyValue: apiKeyValue || undefined,
+        outputDir: defaults.outputDir,
+        timezone: defaults.timezone,
         searchEnabled,
         searchEndpoint: searchEnabled
           ? await prompt.ask("SearXNG endpoint", defaults.searchEndpoint)
@@ -392,13 +517,21 @@ export async function runInitCommand(
         searchCutoffDate: searchEnabled
           ? await prompt.ask("Search cutoff date (ISO)", defaults.searchCutoffDate)
           : defaults.searchCutoffDate,
+        advanced,
       };
     } finally {
-      prompt.close();
+      if (createdPrompt) {
+        prompt.close();
+      }
     }
   }
 
-  writeFileSync(opts.output, renderInitConfig(answers), "utf-8");
+  if (answers.apiKeyValue) {
+    upsertEnvVar(answers.apiKeyEnv, answers.apiKeyValue);
+  }
+
+  const config = buildInitConfig(answers);
+  saveConfig(opts.output, config);
   io.stdout(`Created ${opts.output}\n`);
 
   const envVarExists = Boolean(process.env[answers.apiKeyEnv]);
@@ -411,6 +544,23 @@ export async function runInitCommand(
     io.stdout(`  [INFO] Web search enabled at ${answers.searchEndpoint}\n`);
   }
 
+  if (envVarExists) {
+    try {
+      await validateProviderConnection({
+        provider: answers.provider,
+        sdk: answers.provider,
+        model: answers.simulationModel,
+        apiKeyEnv: answers.apiKeyEnv,
+        baseUrl: answers.baseUrl,
+      });
+      io.stdout(
+        `  [PASS] ${getProviderCatalog(answers.provider).label} validated with ${describeConfiguredModel(answers.provider, answers.simulationModel)}\n`
+      );
+    } catch (err) {
+      io.stderr(`  [WARN] Provider validation failed: ${formatErrorMessage(err)}\n`);
+    }
+  }
+
   try {
     const testStore = new SQLiteGraphStore(":memory:");
     testStore.close();
@@ -420,10 +570,6 @@ export async function runInitCommand(
   }
 
   io.stdout('Next: run "publicmachina doctor" to validate the full setup.\n');
-}
-
-function parseBooleanAnswer(value: string): boolean {
-  return /^(y|yes|true|1)$/i.test(value.trim());
 }
 
 async function runDesignCommand(
@@ -477,7 +623,7 @@ async function runDesignCommand(
         "Output files already exist. Overwrite them? (yes/no)",
         "no"
       );
-      if (!parseBooleanAnswer(overwrite)) {
+      if (!askYesNoAnswer(overwrite, false)) {
         io.stdout("Aborted before writing output files.\n");
         return;
       }
@@ -488,7 +634,7 @@ async function runDesignCommand(
         throw new Error("Design confirmation requires interactive mode or --yes.");
       }
       const confirm = await prompt.ask("Write the generated spec and config? (yes/no)", "yes");
-      if (!parseBooleanAnswer(confirm)) {
+      if (!askYesNoAnswer(confirm, true)) {
         io.stdout("Aborted before writing output files.\n");
         return;
       }
@@ -827,6 +973,30 @@ export function createProgram(io: CliIO = defaultIO): Command {
       printBanner(io);
     });
 
+  program.action(async () => {
+    if (!process.stdin.isTTY) {
+      program.outputHelp();
+      return;
+    }
+
+    const prompt = createPromptSession();
+    try {
+      await ensureConfigFile(DEFAULT_CONFIG_PATH, io, prompt);
+      io.stdout("Setup complete. Describe the simulation you want to design.\n");
+      await runDesignCommand(
+        {
+          config: DEFAULT_CONFIG_PATH,
+          outConfig: "publicmachina.generated.config.yaml",
+          outSpec: "simulation.spec.json",
+        },
+        io,
+        prompt
+      );
+    } finally {
+      prompt.close();
+    }
+  });
+
   // ═══════════════════════════════════════════════════════
   // SIMULATE
   // ═══════════════════════════════════════════════════════
@@ -953,6 +1123,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
     .option("--db <path>", "SQLite database path", "simulation.db")
     .option("--actor <name>", "actor name, handle, or ID")
     .option("--run <id>", "run ID")
+    .option("--config <path>", "config YAML file")
     .option("--question <text>", "single question (omit for REPL mode)")
     .option("--mock", "use MockCognitionBackend")
     .action(async (opts) => {
@@ -962,7 +1133,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
         if (!runId) throw new Error("No runs found in database.");
 
         const actor = resolveActorByName(store, runId, opts.actor);
-        const config = defaultConfig();
+        const config = getConfig(opts.config);
         const backend = opts.mock
           ? new MockCognitionBackend()
           : new DirectLLMBackend(
@@ -1090,25 +1261,51 @@ export function createProgram(io: CliIO = defaultIO): Command {
     .description("Interactive conversational REPL")
     .option("--db <path>", "SQLite database path", "simulation.db")
     .option("--run <id>", "run ID")
-    .option("--config <path>", "config YAML file")
-    .option("--mock", "use MockCognitionBackend for interviews")
+    .option("--config <path>", "config YAML file", DEFAULT_CONFIG_PATH)
+    .option("--mock", "use mock cognition + mock NL query translation")
     .action(async (opts) => {
+      if (!opts.mock) {
+        await ensureConfigFile(opts.config, io);
+      }
+
       const store = new SQLiteGraphStore(opts.db);
       try {
         const runId = opts.run ?? store.getLatestRunId();
         if (!runId) throw new Error("No runs found in database.");
 
-        const config = getConfig(opts.config);
-        const llm = createCliLlm(config, { feature: "shell" });
-        const backend = opts.mock
+        const config = opts.mock && !existsSync(opts.config)
+          ? defaultConfig()
+          : getConfig(opts.config);
+        const shellCtx: Parameters<typeof startShell>[0] = {
+          store,
+          runId,
+          config,
+          configPath: opts.config,
+        };
+        shellCtx.llm = createCliLlm(config, { mock: opts.mock, feature: "shell" });
+        shellCtx.backend = opts.mock
           ? new MockCognitionBackend()
           : new DirectLLMBackend(
-              llm,
+              shellCtx.llm,
               store,
               { runId, promptVersion: getPromptVersion() }
             );
 
-        if (backend) await backend.start();
+        if (shellCtx.backend) await shellCtx.backend.start();
+
+        shellCtx.onConfigUpdate = async (nextConfig) => {
+          if (shellCtx.backend) await shellCtx.backend.shutdown();
+          shellCtx.config = nextConfig;
+          shellCtx.llm = createCliLlm(nextConfig, { mock: opts.mock, feature: "shell" });
+          shellCtx.backend = opts.mock
+            ? new MockCognitionBackend()
+            : new DirectLLMBackend(
+                shellCtx.llm,
+                store,
+                { runId, promptVersion: getPromptVersion() }
+              );
+          if (shellCtx.backend) await shellCtx.backend.start();
+        };
 
         const rl = createInterface({
           input: process.stdin,
@@ -1117,7 +1314,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
 
         try {
           await startShell(
-            { store, runId, llm, backend },
+            shellCtx,
             {
               prompt: (text) => rl.setPrompt(text),
               output: (text) => io.stdout(text),
@@ -1132,7 +1329,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
             }
           );
         } finally {
-          if (backend) await backend.shutdown();
+          if (shellCtx.backend) await shellCtx.backend.shutdown();
         }
       } finally {
         store.close();
@@ -1144,8 +1341,9 @@ export function createProgram(io: CliIO = defaultIO): Command {
   // ═══════════════════════════════════════════════════════
 
   program
-    .command("init")
-    .description("Initialize a new PublicMachina project")
+    .command("setup")
+    .alias("init")
+    .description("Guided first-run provider and model setup")
     .option("--output <path>", "config file output path", "publicmachina.config.yaml")
     .option("--yes", "write defaults without interactive prompts")
     .action(async (opts) => {
@@ -1183,16 +1381,15 @@ export function createProgram(io: CliIO = defaultIO): Command {
         // 3. Check env vars from config
         try {
           const config = loadConfig(opts.config);
-          for (const [role, provider] of Object.entries(config.providers)) {
-            if (provider && "apiKeyEnv" in provider) {
-              const envVar = (provider as { apiKeyEnv: string }).apiKeyEnv;
-              if (process.env[envVar]) {
-                io.stdout(`  [PASS] ${role}: ${envVar} is set\n`);
-                passed++;
-              } else {
-                io.stdout(`  [FAIL] ${role}: ${envVar} not set\n`);
-                failed++;
-              }
+          for (const role of PROVIDER_ROLES) {
+            const provider = resolveProviderConfig(config.providers, role);
+            const envVar = provider.apiKeyEnv;
+            if (process.env[envVar]) {
+              io.stdout(`  [PASS] ${role}: ${envVar} is set\n`);
+              passed++;
+            } else {
+              io.stdout(`  [FAIL] ${role}: ${envVar} not set\n`);
+              failed++;
             }
           }
 
@@ -1215,6 +1412,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
         }
       } else {
         io.stdout(`  [FAIL] Config file not found: ${opts.config}\n`);
+        io.stdout(`         Run "publicmachina setup" to create one, or pass --config <path>.\n`);
         failed++;
       }
 
@@ -1254,6 +1452,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
 }
 
 export async function runCli(argv = process.argv, io: CliIO = defaultIO): Promise<void> {
+  loadEnvFile();
   const program = createProgram(io);
   await program.parseAsync(argv);
 }

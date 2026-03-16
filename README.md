@@ -15,7 +15,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%3E%3D18-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5+-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![Tests](https://img.shields.io/badge/Tests-406_passing-brightgreen?style=flat-square)]()
+[![Tests](https://img.shields.io/badge/Tests-414_passing-brightgreen?style=flat-square)]()
 
 ---
 
@@ -321,12 +321,13 @@ Documents ──→ Ingest ──→ Knowledge Graph ──→ Ontology ──�
 | `ontology.ts` | LLM-powered ontology extraction (entity types, edge types, topics) | ~370 |
 | `ingest.ts` | Document ingestion → chunks → claims (provenance chain) | ~435 |
 | `graph.ts` | Entity resolution, merge candidates, confidence scoring | ~540 |
-| `llm.ts` | Multi-role Anthropic client + `MockLLMClient` for tests | ~330 |
+| `llm.ts` | Multi-provider runtime client (Anthropic, OpenAI, Moonshot) + `MockLLMClient` | ~405 |
+| `provider-selection.ts` | Provider/model normalization, resolution, and global/role-specific switching helpers | ~268 |
 | `report.ts` | SQL → metrics + optional LLM narrative | ~200 |
 | `interview.ts` | Actor interview flow (single-turn and multi-turn) | ~200 |
 | `ckp.ts` | CKP export/import with secret scrubbing and lived-experience bundle capture | ~718 |
-| `shell.ts` | Conversational REPL: NL→SQL, interviews, schema inspection | ~280 |
-| `config.ts` | YAML config parsing, validation, platform policy normalization, secret sanitization | ~827 |
+| `shell.ts` | Conversational REPL: NL→SQL, interviews, schema inspection, and live provider/model switching | ~515 |
+| `config.ts` | YAML config parsing, validation, platform policy normalization, and secret sanitization | ~812 |
 | `telemetry.ts` | Round-level metrics persistence (tier calls, timing) | ~155 |
 | `types.ts` | Domain types: rows, snapshots, DTOs, platform/runtime projections | ~537 |
 | `ids.ts` | UUID generation + deterministic SHA-256 stable IDs | ~30 |
@@ -371,15 +372,44 @@ After the package is published, the same commands will work as `npx publicmachin
 ### Configuration
 
 ```bash
-# Interactive guided setup
-node dist/index.js init
+# First-run guided setup
+node dist/index.js setup
+
+# Or launch the default interactive entrypoint
+node dist/index.js
 
 # Or copy the example env file
 cp .env.example .env
-# Edit .env with your Anthropic API key
+# Edit .env with your Anthropic, OpenAI, or Moonshot API key
 ```
 
-The `init` command generates a `publicmachina.config.yaml` with model selection, API key references (never raw secrets), and output directory configuration.
+The `setup` command generates a `publicmachina.config.yaml`, offers curated model presets for Anthropic, OpenAI, and Moonshot AI, and writes API keys to `.env` instead of storing secrets in YAML.
+Provider selection is stored as a global default plus optional role-specific overrides:
+
+```yaml
+providers:
+  default:
+    provider: "anthropic"
+    model: "claude-sonnet-4-6"
+    apiKeyEnv: "ANTHROPIC_API_KEY"
+  overrides:
+    report:
+      provider: "openai"
+      model: "gpt-5-mini-2025-08-07"
+      apiKeyEnv: "OPENAI_API_KEY"
+```
+
+Inside the shell you can switch the global default or override a single role without editing YAML manually:
+
+```text
+/model
+/model provider openai
+/model use gpt-5.4
+/model provider moonshot --role report
+/model use kimi-k2-thinking --role report
+/model reset --role report
+```
+
 The `doctor` command verifies your environment — including the SearXNG endpoint, if search is enabled.
 
 ### Design a Simulation in Natural Language
@@ -497,7 +527,7 @@ This is a secondary portability feature, not the runtime core. PublicMachina doe
 | `export-agent` | Export actor as portable bundle |
 | `import-agent` | Import portable bundle into a run |
 | `shell` | Interactive REPL with NL→SQL, interviews, and schema exploration |
-| `init` | Guided configuration wizard |
+| `setup` / `init` | Guided provider + model setup wizard |
 | `doctor` | Diagnostic checks (Node version, config, API keys, SearXNG, SQLite) |
 
 ## Cognition Tiers
@@ -597,7 +627,7 @@ npx tsc --noEmit
 
 ### Test Suite
 
-406 tests across 27 test files covering:
+414 tests across 28 test files covering:
 
 - Knowledge graph pipeline (ingest → claims → entities → resolution)
 - Ontology extraction and entity typing
@@ -657,17 +687,20 @@ publicmachina/
 │   ├── ontology.ts       # LLM ontology extraction
 │   ├── ingest.ts         # Document → claims pipeline
 │   ├── graph.ts          # Entity resolution
-│   ├── llm.ts            # Anthropic SDK client
+│   ├── llm.ts            # Multi-provider LLM client
+│   ├── model-catalog.ts  # Curated provider/model catalog
+│   ├── provider-selection.ts # Provider resolution + override helpers
 │   ├── report.ts         # SQL → report pipeline
 │   ├── interview.ts      # Actor interview flows
 │   ├── ckp.ts            # CKP export/import
 │   ├── shell.ts          # Interactive REPL
 │   ├── config.ts         # YAML config + validation
+│   ├── env.ts            # Lightweight .env loading/writing
 │   ├── telemetry.ts      # Round metrics
 │   ├── reproducibility.ts # Seedable PRNG
 │   ├── types.ts          # Domain types
 │   └── ids.ts            # ID generation
-├── tests/                # 27 test files, 406 tests
+├── tests/                # 28 test files, 414 tests
 ├── package.json
 ├── tsconfig.json
 ├── .env.example

@@ -15,6 +15,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SQLiteGraphStore } from "../src/db.js";
 import type { ActorRow } from "../src/db.js";
 import { runCli, runInitCommand } from "../src/index.js";
+import { loadConfig } from "../src/config.js";
+import { resolveProviderConfig } from "../src/provider-selection.js";
 import { updateRound } from "../src/telemetry.js";
 
 const tempDirs: string[] = [];
@@ -413,22 +415,26 @@ describe("CLI init", () => {
       capture.io,
       {
         ask: async (question, defaultValue) => {
+          if (question.includes("Choose provider")) return "openai";
+          if (question.includes("Choose OpenAI model")) return "GPT-5 mini";
+          if (question.includes("Advanced setup")) return "no";
           if (question.includes("Enable SearXNG web search")) return "yes";
-          if (question.includes("Simulation model")) return "claude-haiku-4-20250414";
-          if (question.includes("Report model")) return "claude-sonnet-4-20250514";
-          if (question.includes("API key env var")) return "CUSTOM_API_KEY";
-          if (question.includes("Output directory")) return "./reports";
           if (question.includes("SearXNG endpoint")) return "http://localhost:8888";
           if (question.includes("Search cutoff date")) return "2026-03-01";
           return defaultValue ?? "";
         },
+        askSecret: async () => "",
         close: () => {},
       }
     );
 
     const contents = readFileSync(configPath, "utf-8");
-    expect(contents).toContain('apiKeyEnv: "CUSTOM_API_KEY"');
-    expect(contents).toContain('dir: "./reports"');
+    const config = loadConfig(configPath);
+    expect(contents).toContain("default:");
+    expect(contents).toContain('provider: "openai"');
+    expect(contents).toContain('apiKeyEnv: "OPENAI_API_KEY"');
+    expect(resolveProviderConfig(config.providers, "simulation").model).toBe("gpt-5-mini-2025-08-07");
+    expect(contents).toContain('dir: "./output"');
     expect(contents).toContain("enabled: true");
     expect(contents).toContain('cutoffDate: "2026-03-01"');
     expect(contents).toContain("search:");
@@ -486,6 +492,24 @@ describe("CLI design", () => {
 });
 
 describe("CLI doctor", () => {
+  it("prints actionable guidance when the default config file is missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "publicmachina-doctor-missing-"));
+    tempDirs.push(dir);
+
+    const capture = makeIO();
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      await runCli(["node", "publicmachina", "doctor"], capture.io);
+    } finally {
+      process.chdir(cwd);
+    }
+
+    const output = capture.getStdout();
+    expect(output).toContain("[FAIL] Config file not found: publicmachina.config.yaml");
+    expect(output).toContain('Run "publicmachina setup" to create one, or pass --config <path>.');
+  });
+
   it("checks search health when search is enabled", async () => {
     process.env.TEST_PROVIDER_KEY = "set";
 

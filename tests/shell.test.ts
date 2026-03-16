@@ -10,9 +10,14 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { SQLiteGraphStore } from "../src/db.js";
 import { MockLLMClient } from "../src/llm.js";
 import { MockCognitionBackend } from "../src/cognition.js";
+import { defaultConfig, saveConfig } from "../src/config.js";
+import { resolveProviderConfig } from "../src/provider-selection.js";
 import {
   classifyIntent,
   extractSchema,
@@ -285,6 +290,97 @@ describe("startShell", () => {
     expect(combined).toContain("total");
     expect(combined).toContain("3");
 
+    store.close();
+  });
+
+  it("supports /model switching and persists the new provider/model", async () => {
+    const { store, runId } = setupShellStore();
+    const dir = mkdtempSync(join(tmpdir(), "publicmachina-shell-model-"));
+    const configPath = join(dir, "publicmachina.config.yaml");
+    const config = defaultConfig();
+    saveConfig(configPath, config);
+    process.env.OPENAI_API_KEY = "test-openai-key";
+
+    const outputs: string[] = [];
+    const errors: string[] = [];
+    const prompts: string[] = [];
+    const inputs = ["/model provider openai", "/model", "exit"];
+    let lastConfig = config;
+
+    await startShell(
+      {
+        store,
+        runId,
+        llm: new MockLLMClient(),
+        backend: new MockCognitionBackend(),
+        config,
+        configPath,
+        onConfigUpdate: async (next) => {
+          lastConfig = next;
+        },
+      },
+      {
+        prompt: (text) => prompts.push(text),
+        output: (text) => outputs.push(text),
+        error: (text) => errors.push(text),
+        readline: async () => inputs.shift() ?? "exit",
+        close: () => {},
+      }
+    );
+
+    const combined = outputs.join("");
+    expect(prompts).toContain("publicmachina> ");
+    expect(errors).toHaveLength(0);
+    expect(lastConfig.providers.default.provider).toBe("openai");
+    expect(lastConfig.providers.default.model).toBe("gpt-5.4-2026-03-05");
+    expect(resolveProviderConfig(lastConfig.providers, "simulation").provider).toBe("openai");
+    expect(combined).toContain("Switched default provider to OpenAI");
+    expect(combined).toContain("Default provider: OpenAI");
+    expect(combined).toContain("GPT-5.4");
+
+    delete process.env.OPENAI_API_KEY;
+    rmSync(dir, { recursive: true, force: true });
+    store.close();
+  });
+
+  it("supports role-specific /model overrides without changing the default provider", async () => {
+    const { store, runId } = setupShellStore();
+    const dir = mkdtempSync(join(tmpdir(), "publicmachina-shell-model-role-"));
+    const configPath = join(dir, "publicmachina.config.yaml");
+    const config = defaultConfig();
+    saveConfig(configPath, config);
+    process.env.OPENAI_API_KEY = "test-openai-key";
+
+    let lastConfig = config;
+    const inputs = ["/model provider openai --role report", "exit"];
+
+    await startShell(
+      {
+        store,
+        runId,
+        llm: new MockLLMClient(),
+        backend: new MockCognitionBackend(),
+        config,
+        configPath,
+        onConfigUpdate: async (next) => {
+          lastConfig = next;
+        },
+      },
+      {
+        prompt: () => {},
+        output: () => {},
+        error: () => {},
+        readline: async () => inputs.shift() ?? "exit",
+        close: () => {},
+      }
+    );
+
+    expect(lastConfig.providers.default.provider).toBe("anthropic");
+    expect(resolveProviderConfig(lastConfig.providers, "report").provider).toBe("openai");
+    expect(resolveProviderConfig(lastConfig.providers, "simulation").provider).toBe("anthropic");
+
+    delete process.env.OPENAI_API_KEY;
+    rmSync(dir, { recursive: true, force: true });
     store.close();
   });
 });
