@@ -195,7 +195,7 @@ const DEFAULTS: SimConfig = {
     platform: "x",
     totalHours: 72,
     minutesPerRound: 60,
-    timezone: "America/Bogota",
+    timezone: "UTC",
     concurrency: 1,
     timeAccelerationMode: "off",
     maxFastForwardRounds: 24,

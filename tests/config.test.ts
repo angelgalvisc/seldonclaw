@@ -29,7 +29,7 @@ describe("config.ts", () => {
       expect(config.simulation.platform).toBe("x");
       expect(config.simulation.totalHours).toBe(72);
       expect(config.simulation.minutesPerRound).toBe(60);
-      expect(config.simulation.timezone).toBe("America/Bogota");
+      expect(config.simulation.timezone).toBe("UTC");
       expect(config.simulation.timeAccelerationMode).toBe("off");
       expect(config.simulation.maxFastForwardRounds).toBe(24);
       expect(config.simulation.seed).toBe(42);
@@ -203,7 +203,7 @@ output:
 `;
       const config = parseConfig(yaml);
       expect(config.simulation.platform).toBe("x");
-      expect(config.simulation.timezone).toBe("America/Bogota");
+      expect(config.simulation.timezone).toBe("America/Bogota"); // explicit in fixture YAML
       expect(config.cognition.tierA.archetypeOverrides).toContain("media");
       expect(config.search.cutoffDate).toBe("2026-03-01");
       expect(config.search.allowArchetypes).toEqual(["media"]);
