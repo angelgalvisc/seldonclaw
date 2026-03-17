@@ -61,15 +61,14 @@ describe("assistant-operator.ts", () => {
     const statusText = statuses.join("");
 
     expect(questions).toContain("Are you ready to simulate?");
-    expect(questions).toContain(
-      "What would you like to work on today, Angel? You can ask me to design, run, inspect, report on, or compare simulations."
-    );
+    expect(questions).toContain("[Angel]");
     expect(questions).not.toContain("What should I call you?");
     expect(
       questions.some((question) => question.startsWith("What context should I keep in mind?"))
     ).toBe(false);
 
     expect(combined).toContain("Welcome back, Angel.");
+    expect(combined).toContain("What would you like to work on today, Angel?");
     expect(statusText).toContain("I will keep using your last context unless you tell me to change it");
     expect(combined).toContain("Goodbye.");
   });

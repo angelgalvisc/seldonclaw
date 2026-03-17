@@ -101,10 +101,19 @@ const defaultIO: CliIO = {
 
 /** Styled IO for the assistant operator (agent output / error / status). */
 function styledOperatorIO(base: CliIO) {
+  const agentLabel = pc.magenta("[PublicMachina]:");
+  const statusLabel = pc.dim("[PublicMachina/status]:");
+  const formatSpeakerBlock = (label: string, text: string) => {
+    if (!text.trim()) return text;
+    const hasTrailingNewline = text.endsWith("\n");
+    const body = hasTrailingNewline ? text.slice(0, -1) : text;
+    const message = body.includes("\n") ? `${label}\n${body}` : `${label} ${body}`;
+    return hasTrailingNewline ? `${message}\n` : message;
+  };
   return {
-    stdout: base.stdout,
+    stdout: (text: string) => base.stdout(formatSpeakerBlock(agentLabel, text)),
     stderr: (text: string) => base.stderr(pc.red(text)),
-    status: (text: string) => base.stdout(pc.dim(text)),
+    status: (text: string) => base.stdout(formatSpeakerBlock(statusLabel, pc.dim(text))),
   };
 }
 

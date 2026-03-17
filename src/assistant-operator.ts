@@ -193,17 +193,16 @@ export async function startAssistantOperator(
     recordAssistantMessage(session, conversation, "user", `Context: ${context.trim()}`);
   }
 
-  let nextInput = await prompt.ask(
-    `What would you like to work on today, ${preferredName}? You can ask me to design, run, inspect, report on, or compare simulations.`,
-    "",
-    { multiline: true }
-  );
+  const openingQuestion = `What would you like to work on today, ${preferredName}? You can ask me to design, run, inspect, report on, or compare simulations.`;
+  io.stdout(`${openingQuestion}\n`);
+  recordAssistantMessage(session, conversation, "assistant", openingQuestion);
+  let nextInput = await prompt.ask(`[${preferredName}]`, "", { multiline: true });
 
   while (true) {
     const input = nextInput.trim();
     nextInput = "";
     if (!input) {
-      nextInput = await prompt.ask(`${preferredName}`, "", { multiline: true });
+      nextInput = await prompt.ask(`[${preferredName}]`, "", { multiline: true });
       continue;
     }
 
@@ -220,7 +219,7 @@ export async function startAssistantOperator(
       if (/^(\/exit|quit|exit)$/i.test(input)) {
         return;
       }
-      nextInput = await prompt.ask(`${preferredName}`, "", { multiline: true });
+      nextInput = await prompt.ask(`[${preferredName}]`, "", { multiline: true });
       continue;
     }
 
@@ -251,7 +250,7 @@ export async function startAssistantOperator(
           runtime
         );
         emitToolResult(io, session, conversation, result);
-        nextInput = await prompt.ask(`${preferredName}`, "", { multiline: true });
+        nextInput = await prompt.ask(`[${preferredName}]`, "", { multiline: true });
         continue;
       }
       if (/^(n|no|cancel)$/i.test(normalized)) {
@@ -259,7 +258,7 @@ export async function startAssistantOperator(
         const message = "Understood. I kept the design and cleared the pending run confirmation.";
         io.stdout(`${message}\n`);
         recordAssistantMessage(session, conversation, "assistant", message);
-        nextInput = await prompt.ask(`${preferredName}`, "", { multiline: true });
+        nextInput = await prompt.ask(`[${preferredName}]`, "", { multiline: true });
         continue;
       }
     }
@@ -342,7 +341,7 @@ export async function startAssistantOperator(
       recordAssistantMessage(session, conversation, "assistant", fallback);
     }
 
-    nextInput = await prompt.ask(`${preferredName}`, "", { multiline: true });
+    nextInput = await prompt.ask(`[${preferredName}]`, "", { multiline: true });
   }
 }
 
