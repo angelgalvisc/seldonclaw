@@ -30,6 +30,7 @@ import { extractOntology } from "./ontology.js";
 import { buildKnowledgeGraph } from "./graph.js";
 import { generateProfiles } from "./profiles.js";
 import { designSimulationFromBrief, type CastDesign } from "./design.js";
+import { designCast } from "./cast-design.js";
 import { checkSearchHealth, createSearchProvider } from "./search.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -132,6 +133,34 @@ function parseIntOption(value: string, field: string): number {
 
 function getConfig(configPath?: string): SimConfig {
   return configPath ? loadConfig(configPath) : defaultConfig();
+}
+
+function readCliDocSummaries(docsPath: string, maxChars = 800): string[] {
+  try {
+    const { readdirSync } = require("node:fs") as typeof import("node:fs");
+    const files = readdirSync(docsPath)
+      .filter((f: string) => f.endsWith(".md") || f.endsWith(".txt"))
+      .sort();
+    return files.map((file: string) => {
+      const content = readFileSync(`${docsPath}/${file}`, "utf-8");
+      // Skip boilerplate, take substantive paragraphs
+      const lines = content.split("\n");
+      const parts: string[] = [];
+      let charCount = 0;
+      const titleLine = lines.find((l) => l.startsWith("# "));
+      if (titleLine) { parts.push(titleLine); charCount += titleLine.length; }
+      for (const line of lines) {
+        if (charCount >= maxChars) break;
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("Source URL:") || trimmed.length < 30) continue;
+        parts.push(trimmed);
+        charCount += trimmed.length;
+      }
+      return parts.join("\n").slice(0, maxChars);
+    }).filter((s) => s.length >= 50);
+  } catch {
+    return [];
+  }
 }
 
 async function ensureConfigFile(
@@ -805,6 +834,29 @@ async function runDesignCommand(
       }
     }
 
+    // Cast design pass: if docs are available, propose actors and communities
+    const docsPath = result.spec.docsPath ?? opts.docs;
+    if (docsPath && existsSync(docsPath)) {
+      io.stdout("Running cast design from source documents...\n");
+      const docSummaries = readCliDocSummaries(docsPath);
+      const castResult = await designCast(llm, {
+        spec: {
+          title: result.spec.title,
+          objective: result.spec.objective,
+          hypothesis: result.spec.hypothesis,
+          focusActors: result.spec.focusActors,
+        },
+        sourceDocSummaries: docSummaries,
+      });
+      result.spec.castDesign = castResult;
+      if (castResult.castSeeds.length > 0) {
+        io.stdout(`  Cast seeds: ${castResult.castSeeds.length} actors proposed\n`);
+      }
+      if (castResult.communityProposals.length > 0) {
+        io.stdout(`  Communities: ${castResult.communityProposals.map((c) => c.name).join(", ")}\n`);
+      }
+    }
+
     writeFileSync(opts.outSpec, `${JSON.stringify(result.spec, null, 2)}\n`, "utf-8");
     writeFileSync(opts.outConfig, result.yaml, "utf-8");
 
@@ -850,12 +902,10 @@ async function runDesignCommand(
     const nextParts = [
       "node dist/index.js run",
       `--config ${JSON.stringify(opts.outConfig)}`,
+      `--spec ${JSON.stringify(opts.outSpec)}`,
     ];
-    if (result.spec.docsPath) {
-      nextParts.push(`--docs ${JSON.stringify(result.spec.docsPath)}`);
-    }
-    if (result.spec.hypothesis) {
-      nextParts.push(`--hypothesis ${JSON.stringify(result.spec.hypothesis)}`);
+    if (docsPath) {
+      nextParts.push(`--docs ${JSON.stringify(docsPath)}`);
     }
     io.stdout(`Next: ${nextParts.join(" ")}\n`);
   } finally {
@@ -999,15 +1049,29 @@ async function runIngestCommand(
 }
 
 async function runAnalyzeCommand(
-  opts: { db: string; config?: string; mock?: boolean },
+  opts: { db: string; config?: string; spec?: string; mock?: boolean },
   io: CliIO
 ): Promise<void> {
   const config = getConfig(opts.config);
   const llm = createPipelineLlm(config, opts.mock);
   const store = new SQLiteGraphStore(opts.db);
   try {
-    const ontology = await extractOntology(store, llm);
-    const graph = await buildKnowledgeGraph(store, llm);
+    // Read entity type hints from spec if available
+    let entityTypeHints: Array<{ name: string; type: string }> | undefined;
+    if (opts.spec && existsSync(opts.spec)) {
+      try {
+        const specData = JSON.parse(readFileSync(opts.spec, "utf-8")) as Record<string, unknown>;
+        const cd = specData.castDesign as { entityTypeHints?: unknown } | undefined;
+        if (cd && Array.isArray(cd.entityTypeHints)) {
+          entityTypeHints = cd.entityTypeHints as Array<{ name: string; type: string }>;
+        }
+      } catch { /* Non-fatal */ }
+    }
+
+    const ontology = await extractOntology(store, llm, {
+      pipelineConcurrency: config.simulation.pipelineConcurrency,
+    });
+    const graph = await buildKnowledgeGraph(store, llm, { entityTypeHints });
     io.stdout("Analysis complete\n");
     io.stdout(`  Entity types: ${ontology.entityTypes.length}\n`);
     io.stdout(`  Edge types: ${ontology.edgeTypes.length}\n`);
@@ -1025,6 +1089,7 @@ async function runGenerateCommand(
     db: string;
     run?: string;
     config?: string;
+    spec?: string;
     hypothesis?: string;
     mock?: boolean;
     maxActors?: string;
@@ -1035,15 +1100,42 @@ async function runGenerateCommand(
   const llm = createPipelineLlm(config, opts.mock);
   const store = new SQLiteGraphStore(opts.db);
   const runId = opts.run ?? uuid();
+
+  // Read spec fields if available
+  let specFocusActors: string[] = [];
+  let specCastSeeds: Array<{ name: string; type: string; role: string; stance?: string; community?: string }> | undefined;
+  let specCommunityProposals: Array<{ name: string; description: string; memberLabels: string[] }> | undefined;
+  let specHypothesis: string | undefined;
+  if (opts.spec && existsSync(opts.spec)) {
+    try {
+      const specData = JSON.parse(readFileSync(opts.spec, "utf-8")) as Record<string, unknown>;
+      if (Array.isArray(specData.focusActors)) {
+        specFocusActors = specData.focusActors.filter((v): v is string => typeof v === "string");
+      }
+      if (typeof specData.hypothesis === "string") specHypothesis = specData.hypothesis;
+      const cd = specData.castDesign as { castSeeds?: unknown; communityProposals?: unknown } | undefined;
+      if (cd) {
+        if (Array.isArray(cd.castSeeds)) specCastSeeds = cd.castSeeds as typeof specCastSeeds;
+        if (Array.isArray(cd.communityProposals)) specCommunityProposals = cd.communityProposals as typeof specCommunityProposals;
+      }
+    } catch { /* Non-fatal */ }
+  }
+
+  const hypothesis = opts.hypothesis ?? specHypothesis;
+
   try {
-    ensureRunManifest(store, runId, config, opts.hypothesis);
+    ensureRunManifest(store, runId, config, hypothesis);
     const result = await generateProfiles(
       store,
       llm,
       {
         runId,
-        hypothesis: opts.hypothesis,
+        hypothesis,
         maxActors: opts.maxActors ? parseIntOption(opts.maxActors, "maxActors") : 0,
+        focusActors: specFocusActors,
+        castSeeds: specCastSeeds,
+        communityProposals: specCommunityProposals,
+        pipelineConcurrency: config.simulation.pipelineConcurrency,
         platform: config.simulation.platform,
       },
       config
@@ -1089,21 +1181,43 @@ async function runPipelineCommand(
   });
   let result!: Awaited<ReturnType<typeof executePipeline>>;
   try {
-    // Read castDesign from spec if available
+    // Read spec fields if --spec was provided (fills in what CLI flags don't cover)
     let castDesign: CastDesign | undefined;
+    let specFocusActors: string[] = [];
+    let specActorCount: number | null = null;
+    let specHypothesis: string | undefined;
+
     if (opts.spec && existsSync(opts.spec)) {
       try {
-        const specData = JSON.parse(readFileSync(opts.spec, "utf-8")) as { castDesign?: CastDesign };
-        castDesign = specData.castDesign ?? undefined;
-      } catch { /* Non-fatal */ }
+        const specData = JSON.parse(readFileSync(opts.spec, "utf-8")) as Record<string, unknown>;
+        castDesign = (specData.castDesign as CastDesign) ?? undefined;
+        if (Array.isArray(specData.focusActors)) {
+          specFocusActors = specData.focusActors.filter((v): v is string => typeof v === "string");
+        }
+        if (typeof specData.actorCount === "number" && specData.actorCount > 0) {
+          specActorCount = specData.actorCount;
+        }
+        if (typeof specData.hypothesis === "string" && specData.hypothesis.trim()) {
+          specHypothesis = specData.hypothesis.trim();
+        }
+        // Apply rounds from spec if not overridden by CLI flag
+        if (!opts.rounds && typeof specData.rounds === "number" && specData.rounds > 0) {
+          config.simulation.totalHours = (specData.rounds * config.simulation.minutesPerRound) / 60;
+        }
+      } catch { /* Non-fatal: spec is optional enrichment */ }
     }
+
+    // CLI flags override spec values
+    const hypothesis = opts.hypothesis ?? specHypothesis;
 
     result = await executePipeline({
       config,
       dbPath: opts.db,
       docsPath: opts.docs,
       runId,
-      hypothesis: opts.hypothesis,
+      hypothesis,
+      actorCount: specActorCount,
+      focusActors: specFocusActors,
       castDesign,
       mock: opts.mock,
       signal: stopMonitor.signal,
@@ -1385,6 +1499,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
     .description("Extract ontology + claims and build the knowledge graph")
     .option("--db <path>", "SQLite database path", "simulation.db")
     .option("--config <path>", "config YAML file")
+    .option("--spec <path>", "simulation spec JSON (provides entity type hints from cast design)")
     .option("--mock", "use MockLLMClient")
     .action(async (opts) => {
       await runAnalyzeCommand(opts, io);
@@ -1396,6 +1511,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
     .option("--db <path>", "SQLite database path", "simulation.db")
     .option("--run <id>", "run ID")
     .option("--config <path>", "config YAML file")
+    .option("--spec <path>", "simulation spec JSON (provides focus actors, cast seeds, communities)")
     .option("--hypothesis <text>", "scenario hypothesis")
     .option("--max-actors <n>", "cap number of generated actors")
     .option("--mock", "use MockLLMClient")

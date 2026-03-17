@@ -209,7 +209,7 @@ Persist castDesign to simulation.spec.json
 
 Pass 1 runs from the brief alone. Pass 2 runs **after** source documents are downloaded and uses their content to propose actors, communities, and entity type hints. This two-pass design ensures the cast is grounded in real source material, not just the brief.
 
-**Important**: the CLI `design` command only runs Pass 1. Pass 2 (cast design) runs automatically in the conversational operator path. When using the CLI `run` command, pass `--spec` to supply a spec with cast design from a prior operator session.
+**CLI support**: the CLI `design` command runs both passes when `--docs` is provided (it reads downloaded documents for cast design). When using individual phase commands (`analyze`, `generate`), pass `--spec` to supply entity type hints, focus actors, cast seeds, and communities from a prior design. The `run` command reads the full spec automatically when `--spec` is provided.
 
 ### Grounding layer (LLM + deterministic)
 
