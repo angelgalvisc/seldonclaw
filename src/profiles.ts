@@ -25,6 +25,7 @@ import type {
 import { stableId } from "./db.js";
 import type { LLMClient } from "./llm.js";
 import type { SimConfig } from "./config.js";
+import { mapWithConcurrency } from "./concurrency.js";
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -57,6 +58,12 @@ export interface ProfilesOptions {
   maxActors?: number;
   /** User-specified actor seeds that must be present when possible */
   focusActors?: string[];
+  /** Cast seeds from cast-design pass (priority 2 after focusActors) */
+  castSeeds?: Array<{ name: string; type: string; role: string; stance?: string; community?: string }>;
+  /** Community proposals from cast-design pass */
+  communityProposals?: Array<{ name: string; description: string; memberLabels: string[] }>;
+  /** Pipeline concurrency for parallel LLM calls (default: 1) */
+  pipelineConcurrency?: number;
   /** Platform (default: "x") */
   platform?: string;
   /** Initial follow density: probability two actors follow each other (default: 0.3) */
@@ -220,13 +227,15 @@ export async function generateProfiles(
     hypothesis = "Social scenario simulation",
     maxActors = 0,
     focusActors = [],
+    castSeeds,
+    communityProposals,
     platform = "x",
     followDensity = 0.3,
     seedPostsPerKeyActor = 1,
     simStartTime = new Date().toISOString(),
   } = options;
 
-  const candidates = buildProfileCandidates(store, focusActors, maxActors);
+  const candidates = buildProfileCandidates(store, focusActors, maxActors, castSeeds);
   if (candidates.length === 0) {
     return {
       actorsCreated: 0,
@@ -240,19 +249,30 @@ export async function generateProfiles(
   const actorIds: string[] = [];
   const actorTopicsMap = new Map<string, Array<{ topic: string; weight: number }>>();
   const actorArchetypes = new Map<string, string>();
+  const actorNameMap = new Map<string, string>(); // actorId → actor name
+  const concurrency = Math.max(1, options.pipelineConcurrency ?? 1);
 
-  for (const candidate of candidates) {
-    const { entity, entityId, claimTexts } = candidate;
-    // Generate profile via LLM
-    const profile = await generateSingleProfile(
-      llm,
-      entity,
-      claimTexts,
-      hypothesis,
-      platform
-    );
+  // Phase 1: Generate profiles via LLM with bounded concurrency
+  const profileResults = await mapWithConcurrency(
+    candidates,
+    concurrency,
+    async (candidate) => {
+      const profile = await generateSingleProfile(
+        llm,
+        candidate.entity,
+        candidate.claimTexts,
+        hypothesis,
+        platform
+      );
+      return { candidate, profile };
+    }
+  );
 
-    // Determine archetype and cognition tier
+  // Phase 2: Persist to DB sequentially (better-sqlite3 is synchronous)
+  const peakHours = config?.simulation?.peakHours ?? [8, 9, 10, 12, 13, 19, 20, 21, 22];
+
+  for (const { candidate, profile } of profileResults) {
+    const { entity, entityId } = candidate;
     const archetype = mapArchetype(entity.type);
     const cognitionTier = determineCognitionTier(
       profile.influence_weight,
@@ -260,10 +280,6 @@ export async function generateProfiles(
       config
     );
 
-    // Determine active hours (peak hours from config or default)
-    const peakHours = config?.simulation?.peakHours ?? [8, 9, 10, 12, 13, 19, 20, 21, 22];
-
-    // Create actor in DB with stable ID derived from runId + entity.id
     const actorId = store.addActor({
       id: stableId(runId, "actor", entity.id),
       run_id: runId,
@@ -283,17 +299,17 @@ export async function generateProfiles(
       sentiment_bias: clamp(profile.sentiment_bias, -1, 1),
       activity_level: clamp(profile.activity_level, 0, 1),
       influence_weight: clamp(profile.influence_weight, 0, 1),
-      community_id: null, // assigned later
+      community_id: null,
       active_hours: JSON.stringify(peakHours),
       follower_count: estimateFollowers(archetype, profile.influence_weight),
       following_count: estimateFollowing(archetype),
     });
 
     actorIds.push(actorId);
+    actorNameMap.set(actorId, entity.name);
     actorTopicsMap.set(actorId, profile.topics);
     actorArchetypes.set(actorId, archetype);
 
-    // Add topics and beliefs
     for (const { topic, weight } of profile.topics) {
       store.addActorTopic(actorId, topic, clamp(weight, 0, 1));
     }
@@ -302,8 +318,10 @@ export async function generateProfiles(
     }
   }
 
-  // 3. Community detection by topic clustering
-  const communities = detectCommunities(actorIds, actorTopicsMap);
+  // 3. Community detection: proposal-driven if available, else topic clustering
+  const communities = communityProposals?.length
+    ? assignCommunitiesFromProposals(actorIds, actorNameMap, communityProposals, runId, actorTopicsMap)
+    : detectCommunities(actorIds, actorTopicsMap);
   let communitiesCreated = 0;
 
   for (const [communityId, members] of communities) {
@@ -365,37 +383,50 @@ export async function generateProfiles(
     }
   }
 
-  // 5. Create seed posts for key actors (tier A)
-  let seedPostsCreated = 0;
+  // 5. Create seed posts for key actors (tier A) — LLM-generated with parallel execution
+  const seedJobs: Array<{
+    actorId: string;
+    actor: ActorRow;
+    topTopic: string;
+    postIndex: number;
+  }> = [];
+
   for (const actorId of actorIds) {
     const actor = store.getActor(actorId);
-    if (!actor) continue;
-
-    // Only tier A actors create seed posts
-    if (actor.cognition_tier !== "A") continue;
-
+    if (!actor || actor.cognition_tier !== "A") continue;
     for (let p = 0; p < seedPostsPerKeyActor; p++) {
       const topics = actorTopicsMap.get(actorId) ?? [];
       const topTopic = topics.length > 0 ? topics[0].topic : "general";
-
-      const postId = stableId(runId, "seed-post", actorId, String(p));
-      store.addPost({
-        id: postId,
-        run_id: runId,
-        author_id: actorId,
-        content: `[Seed post about ${topTopic} by ${actor.name}]`,
-        round_num: 0,
-        sim_timestamp: simStartTime,
-        likes: 0,
-        reposts: 0,
-        comments: 0,
-        reach: 0,
-        sentiment: actor.sentiment_bias,
-      });
-
-      store.addPostTopic(postId, topTopic);
-      seedPostsCreated++;
+      seedJobs.push({ actorId, actor, topTopic, postIndex: p });
     }
+  }
+
+  const seedContents = await mapWithConcurrency(
+    seedJobs,
+    concurrency,
+    async (job) => generateSeedPostContent(llm, job.actor, job.topTopic, hypothesis, platform)
+  );
+
+  let seedPostsCreated = 0;
+  for (let i = 0; i < seedJobs.length; i++) {
+    const job = seedJobs[i];
+    const content = seedContents[i];
+    const postId = stableId(runId, "seed-post", job.actorId, String(job.postIndex));
+    store.addPost({
+      id: postId,
+      run_id: runId,
+      author_id: job.actorId,
+      content,
+      round_num: 0,
+      sim_timestamp: simStartTime,
+      likes: 0,
+      reposts: 0,
+      comments: 0,
+      reach: 0,
+      sentiment: job.actor.sentiment_bias,
+    });
+    store.addPostTopic(postId, job.topTopic);
+    seedPostsCreated++;
   }
 
   return {
@@ -409,14 +440,17 @@ export async function generateProfiles(
 function buildProfileCandidates(
   store: GraphStore,
   focusActors: string[],
-  maxActors: number
+  maxActors: number,
+  castSeeds?: Array<{ name: string; type: string; role: string; stance?: string; community?: string }>
 ): ProfileCandidate[] {
+  // Rank graph entities by claim count (more claims = more relevant)
   const rankedEntities = store
     .getAllActiveEntities()
     .map((entity) => {
-      const claimTexts = store
-        .queryProvenance(entity.id)
-        .claims.map((claim) => `${claim.subject} ${claim.predicate} ${claim.object}`);
+      const provenance = store.queryProvenance(entity.id);
+      const claimTexts = provenance.claims.map(
+        (claim) => `${claim.subject} ${claim.predicate} ${claim.object}`
+      );
       return {
         entity,
         entityId: entity.id,
@@ -429,6 +463,7 @@ function buildProfileCandidates(
   const candidates: ProfileCandidate[] = [];
   const seen = new Set<string>();
 
+  // Priority 1: focusActors (user-specified)
   for (const focusActor of focusActors) {
     const normalized = normalizeCandidateName(focusActor);
     if (!normalized || seen.has(normalized)) continue;
@@ -454,6 +489,42 @@ function buildProfileCandidates(
     seen.add(normalized);
   }
 
+  // Priority 2: castSeeds (LLM-proposed from cast-design)
+  if (castSeeds) {
+    for (const seed of castSeeds) {
+      const normalized = normalizeCandidateName(seed.name);
+      if (!normalized || seen.has(normalized)) continue;
+
+      const matchedEntity = rankedEntities.find(
+        (candidate) => normalizeCandidateName(candidate.entity.name) === normalized
+      );
+      if (matchedEntity) {
+        // Use the graph entity but inherit the cast seed's type if available
+        const entity = { ...matchedEntity.entity };
+        if (seed.type) entity.type = seed.type;
+        candidates.push({
+          entity,
+          entityId: matchedEntity.entityId,
+          claimTexts: matchedEntity.claimTexts,
+        });
+      } else {
+        candidates.push({
+          entity: {
+            id: stableId("cast-seed", seed.name),
+            type: seed.type || "person",
+            name: seed.name,
+            attributes: JSON.stringify({ role: seed.role, stance: seed.stance, source: "cast_seed" }),
+            merged_into: null,
+          },
+          entityId: null,
+          claimTexts: [`Cast-design seed: ${seed.role}`],
+        });
+      }
+      seen.add(normalized);
+    }
+  }
+
+  // Priority 3: graph entities ranked by relevance
   for (const candidate of rankedEntities) {
     const normalized = normalizeCandidateName(candidate.entity.name);
     if (!normalized || seen.has(normalized)) continue;
@@ -465,6 +536,7 @@ function buildProfileCandidates(
     seen.add(normalized);
   }
 
+  // Priority 4: actorCount cap
   return maxActors > 0 ? candidates.slice(0, maxActors) : candidates;
 }
 
@@ -499,6 +571,57 @@ function inferFocusActorEntityType(label: string): string {
 
 function normalizeCandidateName(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// ═══════════════════════════════════════════════════════
+// INTERNAL: Generate seed post content via LLM
+// ═══════════════════════════════════════════════════════
+
+const SEED_POST_SYSTEM = [
+  "You are generating an initial social media post for a simulated actor.",
+  "Write a realistic first post that this actor would publish, matching their personality, stance, and topics of interest.",
+  "The post should feel natural and authentic to the actor's voice.",
+  "Output valid JSON only. No markdown code fences.",
+].join("\n");
+
+async function generateSeedPostContent(
+  llm: LLMClient,
+  actor: ActorRow,
+  topTopic: string,
+  hypothesis: string,
+  platform: string
+): Promise<string> {
+  const charLimit = platform === "x" ? 280 : 500;
+  try {
+    const prompt = [
+      `Generate an initial ${platform} post for this actor.`,
+      "",
+      `Actor: ${actor.name}`,
+      `Personality: ${actor.personality}`,
+      `Bio: ${actor.bio ?? ""}`,
+      `Stance: ${actor.stance}`,
+      `Profession: ${actor.profession ?? ""}`,
+      `Main topic: ${topTopic}`,
+      `Scenario: ${hypothesis}`,
+      "",
+      `The post must be at most ${charLimit} characters.`,
+      `Respond with: {"content": "the post text"}`,
+    ].join("\n");
+
+    const { data } = await llm.completeJSON<{ content?: unknown }>("generation", prompt, {
+      system: SEED_POST_SYSTEM,
+      temperature: 0.5,
+      maxTokens: 512,
+    });
+
+    const content = typeof data?.content === "string" ? data.content.trim() : "";
+    if (content.length >= 10 && content.length <= charLimit * 1.2) {
+      return content;
+    }
+  } catch {
+    // Fallback below
+  }
+  return `[Seed post about ${topTopic} by ${actor.name}]`;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -548,6 +671,53 @@ export async function generateSingleProfile(
 /**
  * Simple community detection by topic clustering.
  * Groups actors that share the most topics.
+ * Assign actors to communities based on cast-design proposals.
+ * Actors not matched by any proposal fall back to topic-based detection.
+ */
+function assignCommunitiesFromProposals(
+  actorIds: string[],
+  actorNameMap: Map<string, string>,
+  proposals: Array<{ name: string; description: string; memberLabels: string[] }>,
+  runId: string,
+  actorTopicsMap: Map<string, Array<{ topic: string; weight: number }>>
+): Map<string, string[]> {
+  const communities = new Map<string, string[]>();
+  const assigned = new Set<string>();
+
+  // Build label → community mapping
+  const labelToCommunity = new Map<string, string>();
+  for (const proposal of proposals) {
+    const communityId = stableId("community", runId, proposal.name);
+    communities.set(communityId, []);
+    for (const label of proposal.memberLabels) {
+      labelToCommunity.set(label.toLowerCase().trim(), communityId);
+    }
+  }
+
+  // Assign actors by name match against memberLabels
+  for (const actorId of actorIds) {
+    const actorName = actorNameMap.get(actorId) ?? "";
+    const normalized = actorName.toLowerCase().trim();
+    const communityId = labelToCommunity.get(normalized);
+    if (communityId) {
+      communities.get(communityId)!.push(actorId);
+      assigned.add(actorId);
+    }
+  }
+
+  // Unassigned actors fall back to topic-based detection
+  const unassigned = actorIds.filter((id) => !assigned.has(id));
+  if (unassigned.length > 0) {
+    const fallback = detectCommunities(unassigned, actorTopicsMap);
+    for (const [communityId, members] of fallback) {
+      communities.set(communityId, members);
+    }
+  }
+
+  return communities;
+}
+
+/**
  * Uses greedy assignment: first actor defines a community,
  * subsequent actors join if they share enough topics.
  */

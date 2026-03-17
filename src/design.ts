@@ -55,7 +55,43 @@ export interface SimulationSpec {
   feed: SimulationFeedSpec;
   assumptions: string[];
   warnings: string[];
+  castDesign?: CastDesign;
 }
+
+// ═══════════════════════════════════════════════════════
+// CAST DESIGN — second-pass types for actor/community proposals
+// ═══════════════════════════════════════════════════════
+
+/** Actor role seed for simulation — NOT a graph entity. */
+export interface CastSeed {
+  name: string;
+  type: "person" | "organization" | "media" | "institution";
+  role: string;
+  stance?: string;
+  community?: string;
+}
+
+/** Community/faction derived from the simulation hypothesis. */
+export interface CommunityProposal {
+  name: string;
+  description: string;
+  memberLabels: string[];
+}
+
+/** Type hint for graph entity resolution — NOT an actor. */
+export interface EntityTypeHint {
+  name: string;
+  type: string;
+}
+
+/** Output of the cast-design pass (produced after source docs are available). */
+export interface CastDesign {
+  castSeeds: CastSeed[];
+  communityProposals: CommunityProposal[];
+  entityTypeHints: EntityTypeHint[];
+}
+
+// ═══════════════════════════════════════════════════════
 
 export interface DesignValidationIssue {
   field: string;

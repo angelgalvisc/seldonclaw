@@ -54,6 +54,8 @@ export interface ExecutePipelineInput {
   hypothesis?: string | null;
   actorCount?: number | null;
   focusActors?: string[];
+  /** Cast design from the design layer (cast seeds, community proposals, entity type hints) */
+  castDesign?: import("./design.js").CastDesign;
   mock?: boolean;
   callbacks?: PipelineCallbacks;
   signal?: AbortSignal;
@@ -249,8 +251,12 @@ export async function executePipeline(
       message: "Simulation stop requested before analysis.",
     });
     input.callbacks?.onPhase?.("analyze");
-    const ontology = await extractOntology(store, llm);
-    const graph = await buildKnowledgeGraph(store, llm);
+    const ontology = await extractOntology(store, llm, {
+      pipelineConcurrency: config.simulation.pipelineConcurrency,
+    });
+    const graph = await buildKnowledgeGraph(store, llm, {
+      entityTypeHints: input.castDesign?.entityTypeHints,
+    });
     claimsExtracted = ontology.claimsExtracted;
     entitiesCreated = graph.entitiesCreated;
 
@@ -269,6 +275,9 @@ export async function executePipeline(
         hypothesis: input.hypothesis ?? undefined,
         maxActors: input.actorCount ?? 0,
         focusActors: input.focusActors ?? [],
+        castSeeds: input.castDesign?.castSeeds,
+        communityProposals: input.castDesign?.communityProposals,
+        pipelineConcurrency: config.simulation.pipelineConcurrency,
         platform: config.simulation.platform,
       },
       config
@@ -280,6 +289,17 @@ export async function executePipeline(
       shouldStop: input.shouldStop,
       message: "Simulation stop requested before the simulation engine started.",
     });
+    // Inject cast seed names into search allowActors so search activation works
+    if (input.castDesign?.castSeeds?.length) {
+      const castNames = input.castDesign.castSeeds.map((s) => s.name);
+      const existing = new Set(config.search.allowActors.map((a) => a.toLowerCase()));
+      for (const name of castNames) {
+        if (!existing.has(name.toLowerCase())) {
+          config.search.allowActors.push(name);
+        }
+      }
+    }
+
     input.callbacks?.onPhase?.("simulate");
     const backend = input.mock
       ? new MockCognitionBackend()

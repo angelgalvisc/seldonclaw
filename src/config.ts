@@ -48,6 +48,7 @@ export interface SimulationConfig {
   maxFastForwardRounds: number;
   seed: number;
   snapshotEvery: number;
+  pipelineConcurrency: number;
   peakHours: number[];
   offPeakHours: number[];
 }
@@ -200,6 +201,7 @@ const DEFAULTS: SimConfig = {
     maxFastForwardRounds: 24,
     seed: 42,
     snapshotEvery: 10,
+    pipelineConcurrency: 3,
     peakHours: [8, 9, 10, 12, 13, 19, 20, 21, 22],
     offPeakHours: [0, 1, 2, 3, 4, 5, 6],
   },
@@ -509,6 +511,11 @@ function validateConfig(config: SimConfig): void {
   if (config.simulation.concurrency < 1) {
     errors.push(
       new ConfigError("concurrency must be >= 1", "simulation.concurrency")
+    );
+  }
+  if (config.simulation.pipelineConcurrency < 1) {
+    errors.push(
+      new ConfigError("pipelineConcurrency must be >= 1", "simulation.pipelineConcurrency")
     );
   }
   if (

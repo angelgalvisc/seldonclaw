@@ -62,6 +62,7 @@ import {
 } from "./model-catalog.js";
 import { saveConfig } from "./config.js";
 import { formatSimulationPlan, validateSimulationSpec } from "./design.js";
+import { designCast } from "./cast-design.js";
 import {
   acquireActiveRunLock,
   clearStopRequest,
@@ -304,6 +305,21 @@ async function designSimulationTool(
     }
   }
 
+  // Cast-design pass: runs AFTER source docs are available
+  const docSummaries = readSourceDocSummaries(docsPath);
+  const castDesign = await designCast(llm, {
+    spec: {
+      title: result.spec.title,
+      objective: result.spec.objective,
+      hypothesis: result.spec.hypothesis,
+      focusActors: result.spec.focusActors,
+    },
+    sourceDocSummaries: docSummaries,
+  });
+
+  // Persist cast design into the spec file
+  persistCastDesign(result.specPath, castDesign);
+
   const designState: DesignedSimulationState = {
     title: result.spec.title,
     brief,
@@ -342,6 +358,12 @@ async function designSimulationTool(
         ? `Downloaded source documents: ${materializedDocs.downloadedCount}/${materializedDocs.referencedUrlCount}`
         : "Downloaded source documents: 0",
       ...materializedDocs.warnings.map((warning) => `Warning: ${warning}`),
+      castDesign.castSeeds.length > 0
+        ? `Cast seeds: ${castDesign.castSeeds.length} actors proposed`
+        : "Cast seeds: 0 (will use graph entities only)",
+      castDesign.communityProposals.length > 0
+        ? `Communities: ${castDesign.communityProposals.map((c) => c.name).join(", ")}`
+        : "Communities: auto-detected from topics",
       `Next step available: run_simulation`,
     ].join("\n"),
   };
@@ -467,6 +489,7 @@ async function runSimulationTool(
       hypothesis: designed.hypothesis,
       actorCount: designed.actorCount,
       focusActors: readSpecFocusActors(specPath),
+      castDesign: readSpecCastDesign(specPath),
       mock: runtime.mock,
       signal: stopController.signal,
       shouldStop: () => stopRequestAppliesToRun(readStopRequest(runtime.workspace), runId),
@@ -1043,6 +1066,44 @@ function readSpecFocusActors(specPath: string): string[] {
     const spec = JSON.parse(readFileSync(specPath, "utf-8")) as { focusActors?: unknown };
     if (!Array.isArray(spec.focusActors)) return [];
     return [...new Set(spec.focusActors.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
+function readSpecCastDesign(specPath: string): import("./design.js").CastDesign | undefined {
+  if (!existsSync(specPath)) return undefined;
+  try {
+    const spec = JSON.parse(readFileSync(specPath, "utf-8")) as { castDesign?: unknown };
+    if (!spec.castDesign || typeof spec.castDesign !== "object") return undefined;
+    return spec.castDesign as import("./design.js").CastDesign;
+  } catch {
+    return undefined;
+  }
+}
+
+function persistCastDesign(specPath: string, castDesign: import("./design.js").CastDesign): void {
+  if (!existsSync(specPath)) return;
+  try {
+    const spec = JSON.parse(readFileSync(specPath, "utf-8")) as Record<string, unknown>;
+    spec.castDesign = castDesign;
+    writeFileSync(specPath, `${JSON.stringify(spec, null, 2)}\n`, "utf-8");
+  } catch {
+    // Non-fatal: cast design is optional
+  }
+}
+
+function readSourceDocSummaries(docsPath: string, maxChars = 500): string[] {
+  if (!docsPath || !existsSync(docsPath)) return [];
+  try {
+    const { readdirSync } = require("node:fs") as typeof import("node:fs");
+    const files = readdirSync(docsPath)
+      .filter((f: string) => f.endsWith(".md") || f.endsWith(".txt"))
+      .sort();
+    return files.map((file: string) => {
+      const content = readFileSync(join(docsPath, file), "utf-8");
+      return content.slice(0, maxChars);
+    });
   } catch {
     return [];
   }

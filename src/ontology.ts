@@ -16,6 +16,7 @@
 import type { GraphStore, Chunk, EntityType, EdgeType, Claim } from "./db.js";
 import { stableId } from "./db.js";
 import type { LLMClient } from "./llm.js";
+import { mapWithConcurrency } from "./concurrency.js";
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -52,6 +53,8 @@ export interface OntologyOptions {
   schemaSampleSize?: number;
   /** Max chunks to process for claim extraction (0 = all, default: 0) */
   maxClaimsChunks?: number;
+  /** Max concurrent LLM calls for claim extraction (default: 1) */
+  pipelineConcurrency?: number;
 }
 
 export interface OntologyResult {
@@ -215,18 +218,26 @@ export async function extractOntology(
     store.addEdgeType(et);
   }
 
-  // 3. Claim extraction — one chunk at a time for exact provenance.
-  //    Each chunk gets its own LLM call so every claim has a precise source_chunk_id.
+  // 3. Claim extraction — each chunk gets its own LLM call for precise provenance.
+  //    Chunks are processed with bounded concurrency for performance.
   const maxChunks = options.maxClaimsChunks ?? 0;
   const chunksToProcess =
     maxChunks > 0 ? allChunks.slice(0, maxChunks) : allChunks;
 
   const entityTypeNames = entityTypes.map((et) => et.name);
+  const concurrency = Math.max(1, options.pipelineConcurrency ?? 1);
+
+  const chunkClaims = await mapWithConcurrency(
+    chunksToProcess,
+    concurrency,
+    async (chunk) => {
+      const claims = await extractClaims(llm, [chunk.content], entityTypeNames);
+      return { chunk, claims };
+    }
+  );
+
   let totalClaims = 0;
-
-  for (const chunk of chunksToProcess) {
-    const claims = await extractClaims(llm, [chunk.content], entityTypeNames);
-
+  for (const { chunk, claims } of chunkClaims) {
     for (let ci = 0; ci < claims.length; ci++) {
       const claim = claims[ci];
       store.addClaim({

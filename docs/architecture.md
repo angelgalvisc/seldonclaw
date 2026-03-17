@@ -245,6 +245,8 @@ What it does not preserve yet:
 | `cognition.ts` | 3-tier cognition router and backend contracts |
 | `search.ts` | SearXNG client, cutoff filtering, and cache logic |
 | `design.ts` | Natural-language brief -> typed spec -> rendered config |
+| `cast-design.ts` | LLM-guided cast & community proposals from spec + source docs |
+| `concurrency.ts` | Shared bounded-concurrency utility for parallel LLM calls |
 | `assistant-operator.ts` | Conversational operator loop |
 | `assistant-planner.ts` | Planner that chooses reply vs typed tool |
 | `assistant-tools.ts` | Tool execution layer for design, run, stop, query, report, export, and provider switching |
@@ -265,10 +267,10 @@ What it does not preserve yet:
 | `telemetry.ts` | Tier stats, action logging, and operator-facing metrics |
 | `reproducibility.ts` | Seeded PRNG, recorded backend, and replay support |
 | `embeddings.ts` | Optional embedding-backed feed relevance provider |
-| `profiles.ts` | Actor generation from graph entities |
+| `profiles.ts` | Actor generation from cast seeds, graph entities, and focus actors; community assignment; LLM seed posts |
 | `ontology.ts` | Ontology extraction |
 | `ingest.ts` | Document ingestion and chunking |
-| `graph.ts` | Entity resolution and graph build |
+| `graph.ts` | Entity resolution and graph build with cast-design type hints |
 | `llm.ts` | Multi-provider runtime client |
 | `model-catalog.ts` | Curated provider/model catalog and lookup helpers |
 | `model-command.ts` | Shared `/model` command logic |

@@ -41,6 +41,7 @@ import {
   type SearchExecution,
 } from "./search.js";
 import { getAllowedActionsForTier } from "./platform.js";
+import { mapWithConcurrency } from "./concurrency.js";
 
 export interface ScheduledActorAction {
   index: number;
@@ -233,31 +234,3 @@ async function resolveBackendDecision(
   };
 }
 
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  if (items.length === 0) return [];
-
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-
-  async function runOne(): Promise<void> {
-    while (true) {
-      const current = cursor;
-      cursor++;
-      if (current >= items.length) {
-        return;
-      }
-      results[current] = await worker(items[current], current);
-    }
-  }
-
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    () => runOne()
-  );
-  await Promise.all(workers);
-  return results;
-}

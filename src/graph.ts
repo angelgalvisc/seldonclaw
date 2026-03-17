@@ -39,6 +39,8 @@ export interface GraphBuildOptions {
   llmConfirmMerges?: boolean;
   /** Max entity name length for normalization (default: 200) */
   maxNameLength?: number;
+  /** Type hints from cast-design pass for graph entity typing */
+  entityTypeHints?: Array<{ name: string; type: string }>;
 }
 
 export interface GraphBuildResult {
@@ -72,6 +74,7 @@ export class EntityResolver {
       similarityThreshold: options.similarityThreshold ?? 0.75,
       llmConfirmMerges: options.llmConfirmMerges ?? false,
       maxNameLength: options.maxNameLength ?? 200,
+      entityTypeHints: options.entityTypeHints ?? [],
     };
   }
 
@@ -238,8 +241,8 @@ export async function buildKnowledgeGraph(
   const entityTypes = getEntityTypes(store);
   const entityTypeNames = new Set(entityTypes.map((et) => et.name));
 
-  // 3. Extract unique entities from claims
-  const entityMap = extractEntitiesFromClaims(allClaims, entityTypeNames);
+  // 3. Extract unique entities from claims (with optional type hints from cast-design)
+  const entityMap = extractEntitiesFromClaims(allClaims, entityTypeNames, options.entityTypeHints);
 
   // 4. Create entities in DB
   let entitiesCreated = 0;
@@ -369,8 +372,30 @@ export async function buildKnowledgeGraph(
  */
 function extractEntitiesFromClaims(
   claims: Claim[],
-  entityTypeNames: Set<string>
+  entityTypeNames: Set<string>,
+  entityTypeHints?: Array<{ name: string; type: string }>
 ): Map<string, RawEntity> {
+  // Build hint lookup: normalized name → type
+  const hintMap = new Map<string, string>();
+  if (entityTypeHints) {
+    for (const hint of entityTypeHints) {
+      const key = hint.name.trim().toLowerCase().replace(/\s+/g, " ");
+      if (key && hint.type) hintMap.set(key, hint.type);
+    }
+  }
+
+  function resolveEntityType(name: string): string {
+    const normalized = name.trim().toLowerCase().replace(/\s+/g, " ");
+    const hinted = hintMap.get(normalized);
+    if (hinted) {
+      // If the hint type is a known entity type, use it; otherwise try to match
+      if (entityTypeNames.has(hinted)) return hinted;
+      // Fallback: use the hint as-is if we can register it
+      return hinted;
+    }
+    return guessEntityType(name, entityTypeNames);
+  }
+
   const entityMap = new Map<string, RawEntity>();
 
   for (const claim of claims) {
@@ -379,7 +404,7 @@ function extractEntitiesFromClaims(
     if (!entityMap.has(subjectNorm)) {
       entityMap.set(subjectNorm, {
         name: claim.subject,
-        type: guessEntityType(claim.subject, entityTypeNames),
+        type: resolveEntityType(claim.subject),
         source_claim_ids: [claim.id],
       });
     } else {
@@ -392,7 +417,7 @@ function extractEntitiesFromClaims(
       if (!entityMap.has(objectNorm)) {
         entityMap.set(objectNorm, {
           name: claim.object,
-          type: guessEntityType(claim.object, entityTypeNames),
+          type: resolveEntityType(claim.object),
           source_claim_ids: [claim.id],
         });
       } else {

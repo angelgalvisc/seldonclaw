@@ -125,7 +125,7 @@ One file. Open it with `sqlite3`.
 ## Capabilities
 
 - **Internet-grounded agents**: Tier A and B actors can search SearXNG before deciding, with exact temporal cutoff filtering applied by PublicMachina.
-- **Natural-language design**: describe a scenario in plain English and get a validated `simulation.spec.json` plus executable config.
+- **Natural-language design**: describe a scenario in plain English and get a validated `simulation.spec.json` plus executable config, with LLM-proposed actor cast and community structure.
 - **Conversational operator**: the default entrypoint is a conversation, not a wall of flags.
 - **Replayable alternate realities**: rerun the same scenario under different seeds, response strategies, or information cutoffs.
 - **Deterministic replay**: seedable PRNG plus cached web context keeps reruns inspectable.
@@ -140,27 +140,35 @@ One file. Open it with `sqlite3`.
 ## Architecture
 
 ```text
-Documents ──→ Ingest ──→ Graph ──→ Profiles
-                               │
-                               ▼
-                         Simulation Engine
-                         ┌─────────────────┐
-                         │ Activation      │
-                         │ Feed            │
-                         │ Search          │
-                         │ Cognition       │
-                         │ Propagation     │
-                         │ Fatigue         │
-                         │ Events          │
-                         │ Memory          │
-                         └─────────────────┘
-                               │
-                    ┌──────────┼──────────┐
-                    ▼          ▼          ▼
-                 Report    Interview    Export
+Brief ──→ Spec Design ──→ Source Downloads ──→ Cast Design
+                                                    │
+                                          ┌─────────┴─────────┐
+                                          ▼                   ▼
+                                    Cast Seeds          Entity Type Hints
+                                    Communities               │
+                                          │                   │
+                                          ▼                   ▼
+                              Documents ──→ Ingest ──→ Graph ──→ Profiles
+                                                                    │
+                                                                    ▼
+                                                          Simulation Engine
+                                                          ┌─────────────────┐
+                                                          │ Activation      │
+                                                          │ Feed            │
+                                                          │ Search          │
+                                                          │ Cognition       │
+                                                          │ Propagation     │
+                                                          │ Fatigue         │
+                                                          │ Events          │
+                                                          │ Memory          │
+                                                          └─────────────────┘
+                                                                │
+                                                     ┌──────────┼──────────┐
+                                                     ▼          ▼          ▼
+                                                  Report    Interview    Export
 ```
 
-The public-facing flow is conversational, but execution stays typed and auditable underneath: planner -> typed tools -> simulation service -> engine -> SQLite. More detail lives in [docs/architecture.md](docs/architecture.md).
+The design layer uses LLM to propose actors and communities from the brief and source documents. The grounding layer (ingest, graph, profiles) executes deterministically, using cast seeds and type hints as input. The simulation runtime is fully auditable in SQLite. More detail lives in [docs/architecture.md](docs/architecture.md).
 
 ## CLI reference
 
