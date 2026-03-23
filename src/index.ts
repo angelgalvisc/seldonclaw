@@ -33,7 +33,7 @@ import { designSimulationFromBrief, type CastDesign } from "./design.js";
 import { designCast } from "./cast-design.js";
 import { checkSearchHealth, createSearchProvider } from "./search.js";
 import { prepareGroundedRun } from "./grounding.js";
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import pc from "picocolors";
 import {
@@ -154,7 +154,6 @@ function buildRuntimeConfigFromRun(
 
 function readCliDocSummaries(docsPath: string, maxChars = 800): string[] {
   try {
-    const { readdirSync } = require("node:fs") as typeof import("node:fs");
     const files = readdirSync(docsPath)
       .filter((f: string) => f.endsWith(".md") || f.endsWith(".txt"))
       .sort();
