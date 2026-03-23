@@ -563,7 +563,7 @@ describe("runSimulation — decision execution", () => {
       id: "liker-1",
       run_id: runId,
       activity_level: 1.0,
-      influence_weight: 0.1,
+      influence_weight: 0.9, // Tier A — deterministic, always uses backend
     });
     store.addActor(liker);
 
@@ -603,7 +603,7 @@ describe("runSimulation — decision execution", () => {
       id: "reposter-1",
       run_id: runId,
       activity_level: 1.0,
-      influence_weight: 0.1,
+      influence_weight: 0.9, // Tier A — deterministic, always uses backend
     }));
 
     backend.setDefault({ action: "repost", target: "orig-post", reasoning: "repost" });
@@ -642,7 +642,7 @@ describe("runSimulation — decision execution", () => {
       id: "commenter-1",
       run_id: runId,
       activity_level: 1.0,
-      influence_weight: 0.1,
+      influence_weight: 0.9, // Tier A — deterministic, always uses backend
     }));
 
     backend.setDefault({ action: "comment", target: "parent-post", content: "My comment", reasoning: "" });
@@ -669,7 +669,7 @@ describe("runSimulation — decision execution", () => {
       id: "follower-1",
       run_id: runId,
       activity_level: 1.0,
-      influence_weight: 0.1,
+      influence_weight: 0.9, // Tier A — deterministic, always uses backend
     }));
 
     backend.setDefault({ action: "follow", target: "target-user", reasoning: "follow" });
@@ -690,7 +690,7 @@ describe("runSimulation — decision execution", () => {
       id: "follower-1",
       run_id: runId,
       activity_level: 1.0,
-      influence_weight: 0.1,
+      influence_weight: 0.9, // Tier A — deterministic, always uses backend
     }));
     store.addFollow({
       follower_id: "follower-1",
@@ -729,7 +729,7 @@ describe("runSimulation — decision execution", () => {
       id: "quoter-1",
       run_id: runId,
       activity_level: 1.0,
-      influence_weight: 0.1,
+      influence_weight: 0.9, // Tier A — deterministic, always uses backend
     }));
 
     backend.setDefault({ action: "quote", target: "orig-post", content: "adding context", reasoning: "quote" });
@@ -763,7 +763,7 @@ describe("runSimulation — decision execution", () => {
       id: "actor-unlike",
       run_id: runId,
       activity_level: 1.0,
-      influence_weight: 0.1,
+      influence_weight: 0.9, // Tier A — deterministic, always uses backend
     }));
     store.addExposure({
       actor_id: "actor-unlike",
@@ -837,7 +837,7 @@ describe("runSimulation — decision execution", () => {
       id: "reporter-1",
       run_id: runId,
       activity_level: 1.0,
-      influence_weight: 0.1,
+      influence_weight: 0.9, // Tier A — deterministic, always uses backend
     }));
 
     backend.setDefault({ action: "report", target: "target-post", reasoning: "policy violation" });

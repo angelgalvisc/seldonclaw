@@ -1754,7 +1754,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
     .command("resume")
     .description("Resume a cancelled or failed simulation from its latest snapshot")
     .option("--db <path>", "SQLite database path", "simulation.db")
-    .option("--config <path>", "config YAML file", DEFAULT_CONFIG_PATH)
+    .option("--config <path>", "config YAML file (uses run's stored config if omitted)")
     .option("--run <id>", "run ID (latest run if omitted)")
     .option("--offline", "explicitly disable web grounding for this run")
     .option("--mock", "use MockCognitionBackend instead of DirectLLMBackend")
@@ -1767,7 +1767,7 @@ export function createProgram(io: CliIO = defaultIO): Command {
     .description("Replay a run from scaffold + decision cache into a copied database")
     .option("--db <path>", "source SQLite database path", "simulation.db")
     .option("--out-db <path>", "output SQLite database path for the replayed run")
-    .option("--config <path>", "config YAML file", DEFAULT_CONFIG_PATH)
+    .option("--config <path>", "config YAML file (uses run's stored config if omitted)")
     .option("--run <id>", "run ID (latest run if omitted)")
     .action(async (opts) => {
       await runReplayCommand(
