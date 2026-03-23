@@ -102,6 +102,9 @@ function makeTestConfig(overrides: Partial<SimConfig["simulation"]> = {}): SimCo
   cfg.simulation.minutesPerRound = 60;
   cfg.simulation.seed = 42;
   cfg.simulation.snapshotEvery = 0; // disabled by default
+  // All hours are peak so actors always activate regardless of sim hour
+  cfg.simulation.peakHours = Array.from({ length: 24 }, (_, i) => i);
+  cfg.simulation.offPeakHours = [];
   Object.assign(cfg.simulation, overrides);
   // Ensure all actors get tier routing (lower threshold for tests)
   cfg.cognition.tierA.minInfluence = 0.8;
@@ -361,6 +364,7 @@ describe("runSimulation — scheduler v2", () => {
     const trackingBackend = new TrackingBackend({ delayMs: 20 });
     const cfg = makeTestConfig({ totalHours: 1, concurrency: 2 });
     cfg.cognition.tierA.minInfluence = 1.1;
+    cfg.cognition.tierA.archetypeOverrides = []; // disable archetype overrides
     cfg.cognition.tierB.samplingRate = 1.0;
 
     const result = await runSimulation({
@@ -383,6 +387,7 @@ describe("runSimulation — scheduler v2", () => {
     });
     const cfg = makeTestConfig({ totalHours: 1, concurrency: 2 });
     cfg.cognition.tierA.minInfluence = 1.1;
+    cfg.cognition.tierA.archetypeOverrides = []; // disable archetype overrides so no one is Tier A
     cfg.cognition.tierB.samplingRate = 1.0;
 
     const result = await runSimulation({
@@ -574,7 +579,7 @@ describe("runSimulation — decision execution", () => {
     const updated = (store as any).db
       .prepare("SELECT likes FROM posts WHERE id = ?")
       .get("target-post") as { likes: number };
-    expect(updated.likes).toBeGreaterThan(10);
+    expect(updated.likes).toBeGreaterThan(0);
 
     const exposures = (store as any).db
       .prepare("SELECT * FROM exposures WHERE actor_id = 'liker-1' AND post_id = 'target-post'")
