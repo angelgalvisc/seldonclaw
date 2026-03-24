@@ -41,6 +41,8 @@ export interface GraphBuildOptions {
   maxNameLength?: number;
   /** Type hints from cast-design pass for graph entity typing */
   entityTypeHints?: Array<{ name: string; type: string }>;
+  /** Whether to validate extracted entities with the LLM (default: true) */
+  validateEntities?: boolean;
 }
 
 export interface GraphBuildResult {
@@ -75,6 +77,7 @@ export class EntityResolver {
       llmConfirmMerges: options.llmConfirmMerges ?? false,
       maxNameLength: options.maxNameLength ?? 200,
       entityTypeHints: options.entityTypeHints ?? [],
+      validateEntities: options.validateEntities ?? true,
     };
   }
 
@@ -213,7 +216,7 @@ export class EntityResolver {
  */
 export async function buildKnowledgeGraph(
   store: GraphStore,
-  _llm: LLMClient,
+  llm: LLMClient,
   options: GraphBuildOptions = {}
 ): Promise<GraphBuildResult> {
   // 1. Load all claims
@@ -242,7 +245,15 @@ export async function buildKnowledgeGraph(
   const entityTypeNames = new Set(entityTypes.map((et) => et.name));
 
   // 3. Extract unique entities from claims (with optional type hints from cast-design)
-  const entityMap = extractEntitiesFromClaims(allClaims, entityTypeNames, options.entityTypeHints);
+  let entityMap = extractEntitiesFromClaims(allClaims, entityTypeNames, options.entityTypeHints);
+
+  // 3b. Validate entities with LLM (unless disabled)
+  if (options.validateEntities !== false) {
+    // Gather source document text from chunks for context
+    const allChunks = allDocs.flatMap((doc) => store.getChunksByDocument(doc.id));
+    const sourceText = allChunks.map((c) => c.content).join("\n").slice(0, 2000);
+    entityMap = await validateEntitiesWithLLM(entityMap, llm, sourceText);
+  }
 
   // 4. Create entities in DB
   let entitiesCreated = 0;
@@ -360,6 +371,112 @@ export async function buildKnowledgeGraph(
     aliasesAdded,
     graphRevisionId,
   };
+}
+
+// ═══════════════════════════════════════════════════════
+// ENTITY VALIDATION
+// ═══════════════════════════════════════════════════════
+
+interface EntityValidationEvaluation {
+  original_name: string;
+  verdict: "KEEP" | "REVISE" | "REMOVE";
+  corrected_name?: string;
+  reason?: string;
+}
+
+interface EntityValidationResponse {
+  evaluations: EntityValidationEvaluation[];
+}
+
+/**
+ * Validate extracted entities using the LLM.
+ * Asks the LLM to evaluate each entity as KEEP/REVISE/REMOVE.
+ * Filters out REMOVE entities and applies REVISE corrections.
+ */
+async function validateEntitiesWithLLM(
+  entityMap: Map<string, RawEntity>,
+  llm: LLMClient,
+  sourceText: string,
+): Promise<Map<string, RawEntity>> {
+  if (entityMap.size === 0) return entityMap;
+
+  const entityNames = [...entityMap.values()].map((e) => e.name);
+  const entityList = entityNames.map((name, i) => `${i + 1}. "${name}"`).join("\n");
+
+  const prompt = `You are reviewing entities extracted from a document for use in a social simulation.
+Your job is to ensure only real, identifiable actors pass through.
+
+For each entity, decide:
+- KEEP: This is a real, identifiable entity that could be a social media actor
+- REVISE: The entity is real but the name needs correction (provide corrected name)
+- REMOVE: This is not a real entity (concept, description, generic group, etc.)
+
+Important: be balanced in your judgments.
+- Not every short name is valid (e.g., "Trading" is too generic)
+- Not every long name is invalid (e.g., "International Monetary Fund" is perfectly fine)
+- Organizations ARE valid entities even if they aren't people
+- Generic groups without specific identity are NOT valid ("Critics", "Analysts")
+- Descriptions of dynamics are NOT valid ("a supply shock as ETF demand...")
+
+Source document context:
+${sourceText.slice(0, 1500)}
+
+Entities to evaluate:
+${entityList}
+
+Return JSON:
+{
+  "evaluations": [
+    {"original_name": "...", "verdict": "KEEP|REVISE|REMOVE", "corrected_name": "only if REVISE", "reason": "..."}
+  ]
+}`;
+
+  let response: EntityValidationResponse;
+  try {
+    const result = await llm.completeJSON<EntityValidationResponse>("analysis", prompt, {
+      temperature: 0.0,
+      maxTokens: 2048,
+    });
+    response = result.data;
+  } catch {
+    // If LLM call fails, return the original entityMap unchanged
+    return entityMap;
+  }
+
+  if (!response.evaluations || !Array.isArray(response.evaluations)) {
+    return entityMap;
+  }
+
+  // Build a lookup from original_name → evaluation
+  const evalMap = new Map<string, EntityValidationEvaluation>();
+  for (const evaluation of response.evaluations) {
+    if (evaluation.original_name) {
+      evalMap.set(evaluation.original_name, evaluation);
+    }
+  }
+
+  const validated = new Map<string, RawEntity>();
+  for (const [normalizedName, rawEntity] of entityMap) {
+    const evaluation = evalMap.get(rawEntity.name);
+
+    if (evaluation?.verdict === "REMOVE") {
+      continue; // Filter out removed entities
+    }
+
+    if (evaluation?.verdict === "REVISE" && evaluation.corrected_name) {
+      // Apply name correction
+      const correctedNorm = evaluation.corrected_name.trim().toLowerCase().replace(/\s+/g, " ");
+      validated.set(correctedNorm, {
+        ...rawEntity,
+        name: evaluation.corrected_name.trim(),
+      });
+    } else {
+      // KEEP or no evaluation found — pass through unchanged
+      validated.set(normalizedName, rawEntity);
+    }
+  }
+
+  return validated;
 }
 
 // ═══════════════════════════════════════════════════════

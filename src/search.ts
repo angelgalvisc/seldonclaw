@@ -48,6 +48,33 @@ interface SearchWithCacheOptions {
   language: string;
 }
 
+async function fetchWithRetry(
+  url: string | URL,
+  init: RequestInit,
+  maxRetries = 3
+): Promise<Response> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch(url, { ...init, signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (response.ok) return response;
+      if (response.status >= 400 && response.status < 500) {
+        throw new Error(`Search API returned ${response.status}`);
+      }
+      lastError = new Error(`Search API returned ${response.status}`);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+    if (attempt < maxRetries - 1) {
+      await new Promise(resolve => setTimeout(resolve, 500 * Math.pow(2, attempt)));
+    }
+  }
+  throw lastError ?? new Error("Search failed after retries");
+}
+
 export class SearxngSearchProvider implements SearchProvider {
   constructor(private endpoint: string) {}
 
@@ -58,16 +85,11 @@ export class SearxngSearchProvider implements SearchProvider {
     searchUrl.searchParams.set("categories", options.categories);
     searchUrl.searchParams.set("language", options.language);
 
-    const response = await fetch(searchUrl, {
-      signal: AbortSignal.timeout(options.timeoutMs),
+    const response = await fetchWithRetry(searchUrl, {
       headers: {
         accept: "application/json",
       },
     });
-
-    if (!response.ok) {
-      throw new Error(`SearXNG request failed (${response.status})`);
-    }
 
     const payload = (await response.json()) as SearxngResponse;
     const normalized = (payload.results ?? [])
@@ -120,24 +142,28 @@ export function buildSearchQueries(
   const queryParts: string[] = [];
   const actorTopicSet = new Set(actorTopics);
 
+  // Get the top feed post content for query enrichment
+  const sortedFeed = [...feed].sort((a, b) => b.score - a.score);
+  const feedTopPost = sortedFeed.length > 0 ? sortedFeed[0].post.content : undefined;
+
   for (const event of activeEvents) {
     const overlappingTopics = event.topics.filter((topic) => actorTopicSet.has(topic));
     const prioritizedTopics = overlappingTopics.length > 0 ? overlappingTopics : event.topics;
     for (const topic of prioritizedTopics) {
-      queryParts.push(composeQuery(topic, actor));
+      queryParts.push(composeQuery(topic, actor, feedTopPost));
     }
   }
 
   for (const topic of actorTopics) {
-    queryParts.push(composeQuery(topic, actor));
+    queryParts.push(composeQuery(topic, actor, feedTopPost));
   }
 
   const seenFeedTopics = new Set<string>();
-  for (const item of [...feed].sort((a, b) => b.score - a.score)) {
+  for (const item of sortedFeed) {
     for (const topic of item.post.topics) {
       if (seenFeedTopics.has(topic)) continue;
       seenFeedTopics.add(topic);
-      queryParts.push(composeQuery(topic, actor));
+      queryParts.push(composeQuery(topic, actor, feedTopPost));
     }
   }
 
@@ -231,7 +257,8 @@ export function filterSearchResultsByCutoff(
 
 export function formatSearchResults(
   executions: SearchExecution[],
-  cutoffDate: string
+  cutoffDate: string,
+  tier?: "A" | "B"
 ): string | undefined {
   const deduped = new Map<string, SearchResult>();
   for (const execution of executions) {
@@ -247,6 +274,10 @@ export function formatSearchResults(
   const lines = [...deduped.values()].slice(0, 5).map((result, index) => {
     const source = result.source ?? safeHostname(result.url);
     const published = result.publishedAt ? `, ${result.publishedAt.slice(0, 10)}` : "";
+    // Tier B actors get headlines only (titles); Tier A gets full results (title + snippet)
+    if (tier === "B") {
+      return `${index + 1}. "${result.title}" — ${source}${published}`;
+    }
     return (
       `${index + 1}. "${result.title}" — ${source}${published}\n` +
       `   ${result.snippet}`
@@ -446,8 +477,15 @@ function resolveSourceName(obj: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-function composeQuery(topic: string, actor: ActorRow): string {
+function composeQuery(topic: string, actor: ActorRow, feedTopPost?: string): string {
   const parts = [topic.trim()];
+  if (actor.profession) {
+    parts.push(actor.profession.split(" ").slice(0, 2).join(" "));
+  }
+  if (feedTopPost) {
+    const words = feedTopPost.split(/\s+/).filter(w => w.length > 4).slice(0, 2);
+    if (words.length > 0) parts.push(words.join(" "));
+  }
   if (actor.region) parts.push(actor.region.trim());
   return parts.filter(Boolean).join(" ");
 }

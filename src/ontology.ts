@@ -122,6 +122,9 @@ Each claim should be:
 - Include temporal information (valid_from/valid_to) when dates are mentioned
 - Include a confidence score (0.0-1.0) based on how explicit the claim is
 
+Important: Subjects and objects should be specific, identifiable named entities (people, organizations, institutions).
+Do NOT use sentence fragments, descriptions of dynamics, or generic group nouns as subjects or objects.
+
 Output valid JSON only. No markdown code fences.`;
 
 function buildClaimsExtractionPrompt(
@@ -144,6 +147,9 @@ For each claim, identify:
 - valid_from: ISO date string if temporal start is mentioned (null otherwise)
 - valid_to: ISO date string if temporal end is mentioned (null otherwise)
 - topics: Array of relevant topic keywords
+
+Important: Subjects and objects should be specific, identifiable named entities (people, organizations, institutions).
+Do NOT use sentence fragments, descriptions of dynamics, or generic group nouns as subjects or objects.
 
 ${combined}
 

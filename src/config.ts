@@ -52,6 +52,7 @@ export interface SimulationConfig {
   pipelineConcurrency: number;
   peakHours: number[];
   offPeakHours: number[];
+  costCapUsd?: number;
 }
 
 export interface CognitionConfig {
@@ -226,6 +227,7 @@ const DEFAULTS: SimConfig = {
     pipelineConcurrency: 3,
     peakHours: [8, 9, 10, 12, 13, 19, 20, 21, 22],
     offPeakHours: [0, 1, 2, 3, 4, 5, 6],
+    costCapUsd: 20,
   },
   cognition: {
     tierA: {
@@ -582,6 +584,17 @@ function validateConfig(config: SimConfig): void {
       new ConfigError(
         "maxFastForwardRounds must be >= 1",
         "simulation.maxFastForwardRounds"
+      )
+    );
+  }
+  if (
+    config.simulation.costCapUsd !== undefined &&
+    config.simulation.costCapUsd <= 0
+  ) {
+    errors.push(
+      new ConfigError(
+        "costCapUsd must be > 0",
+        "simulation.costCapUsd"
       )
     );
   }

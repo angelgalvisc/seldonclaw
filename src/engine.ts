@@ -55,6 +55,7 @@ import {
   shouldAttemptIdleFastForward,
 } from "./time-policy.js";
 import { SimulationCancelledError, throwIfStopRequested } from "./run-control.js";
+import { resolveProviderConfig } from "./provider-selection.js";
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -175,6 +176,26 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
 
   // Threshold triggers fire once and are remembered across rounds.
   const firedTriggers = new Set<string>(opts.initialFiredTriggers ?? []);
+
+  // Cost tracking — abort simulation if cumulative LLM spend exceeds the cap
+  const costTracker = {
+    totalUsd: 0,
+    maxUsd: config.simulation.costCapUsd ?? 20,
+    track(inputTokens: number, outputTokens: number, model: string) {
+      // Rough estimates per 1K tokens
+      const rates: Record<string, { input: number; output: number }> = {
+        'gpt-4o-mini': { input: 0.00015, output: 0.0006 },
+        'gpt-4o': { input: 0.0025, output: 0.01 },
+        'claude-3-5-haiku-latest': { input: 0.0008, output: 0.004 },
+        'claude-sonnet-4-20250514': { input: 0.003, output: 0.015 },
+      };
+      const rate = rates[model] ?? { input: 0.001, output: 0.004 };
+      this.totalUsd += (inputTokens / 1000) * rate.input + (outputTokens / 1000) * rate.output;
+      if (this.totalUsd >= this.maxUsd) {
+        throw new Error(`Cost cap exceeded: $${this.totalUsd.toFixed(2)} >= $${this.maxUsd}. Simulation aborted.`);
+      }
+    }
+  };
 
   try {
     if (startRound === 0 && !store.getRunScaffold(runId)) {
@@ -582,6 +603,21 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
           wallTimeMs: roundWallTimeMs,
         });
       });
+
+      // Cost estimation — rough per-round estimate based on tier call counts.
+      // Tier A calls use the simulation provider model; Tier B uses the same.
+      // Estimate ~800 input tokens and ~200 output tokens per LLM call.
+      {
+        const llmCalls = tierACalls + tierBCalls;
+        if (llmCalls > 0) {
+          const model = resolveProviderConfig(config.providers, "simulation").model;
+          const estInputTokens = 800;
+          const estOutputTokens = 200;
+          for (let i = 0; i < llmCalls; i++) {
+            costTracker.track(estInputTokens, estOutputTokens, model);
+          }
+        }
+      }
 
       // Temporal memory: flush outbox to Graphiti (async, outside SQLite transaction)
       // Failures are logged but do not stop the simulation.

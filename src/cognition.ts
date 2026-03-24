@@ -50,6 +50,8 @@ export interface DecisionRequest {
   roundNum: number;
   actor: {
     name: string;
+    archetype?: string;
+    profession?: string;
     personality: string;
     stance: string;
     gender?: string;
@@ -65,6 +67,12 @@ export interface DecisionRequest {
   webContext?: string;
   /** Temporal memory context from Graphiti (Phase A4). Optional until retrieval is wired. */
   temporalMemoryContext?: string;
+  /** What others said this round, to avoid repetition */
+  recentRoundPosts?: string;
+  /** Whether this actor is eligible to search the web */
+  searchEligible?: boolean;
+  /** Previous search queries from earlier rounds, to avoid duplication */
+  previousSearchQueries?: string[];
 }
 
 export interface DecisionResponse {
@@ -500,6 +508,26 @@ function buildDecisionSystemPrompt(request: DecisionRequest): string {
     ? `\nTEMPORAL MEMORY (your history, relationships, and how your positions have evolved):\n${request.temporalMemoryContext}\n`
     : "";
 
+  const stanceToneGuidance = request.actor.stance === "opposing"
+    ? "- Express real skepticism, cite specific risks or counterarguments"
+    : request.actor.stance === "supportive"
+      ? "- Express enthusiasm but with substantive reasoning, not platitudes"
+      : "- Present balanced analysis, explicitly note tradeoffs";
+
+  const diversitySection = `
+CONTENT GUIDELINES:
+- Do NOT begin with "Absolutely!", "I completely agree!", "Exciting times!", "Great point!", or any generic affirmation
+- Your response must reflect YOUR specific expertise as a ${request.actor.profession ?? request.actor.archetype ?? "participant"}
+- Reference at least one specific fact, number, or concrete detail from your knowledge or the feed
+- If your stance is "${request.actor.stance}", your tone must genuinely reflect that:
+  ${stanceToneGuidance}
+- If other participants have already made a point, do NOT repeat it — build on it, challenge it, or take a different angle
+- Write like a real ${request.actor.archetype ?? "person"} on social media, not like a corporate press release`;
+
+  const searchSection = request.searchEligible
+    ? `\nSEARCH CAPABILITY:\nYou can search the web before deciding. If you want to search, include in your JSON:\n"search_query": "what you would search right now"\nYour query should reflect YOUR expertise as a ${request.actor.profession ?? "analyst"} and be DIFFERENT from previous searches: ${(request.previousSearchQueries ?? []).join(", ") || "none yet"}\n`
+    : "";
+
   return `You are simulating a social media user on ${request.platform}.
 
 YOUR PERSONA:
@@ -513,12 +541,25 @@ Topics of interest: ${request.actor.topics.join(", ")}
 
 BELIEFS (topic → sentiment, -1.0 to 1.0):
 ${Object.entries(request.actor.belief_state).map(([t, s]) => `  ${t}: ${s.toFixed(1)}`).join("\n")}
+${diversitySection}
 
 INTERACTION CONTEXT:
 ${request.simContext}
-${webContextSection}${temporalMemorySection}
+${webContextSection}${temporalMemorySection}${searchSection}
 You must decide what to do next. Choose ONE action from the available actions.
 Respond with valid JSON only.`;
+}
+
+function buildPostIncentive(request: DecisionRequest): string {
+  const feed = request.feed;
+  if (feed.length === 0) return "\nThe feed is empty. Consider creating an original POST to start the conversation.\n";
+
+  const avgSentiment = feed.reduce((s, f) => s + f.post.sentiment, 0) / feed.length;
+  if (Math.abs(avgSentiment) > 0.6) {
+    return `\nNote: The conversation is heavily ${avgSentiment > 0 ? "positive" : "negative"}. Consider whether a different perspective would be valuable.\n`;
+  }
+
+  return "";
 }
 
 function buildDecisionUserPrompt(request: DecisionRequest): string {
@@ -530,7 +571,14 @@ function buildDecisionUserPrompt(request: DecisionRequest): string {
       }).join("\n")
     : "(empty feed)";
 
+  const recentContext = request.recentRoundPosts
+    ? `\nWHAT OTHERS SAID THIS ROUND (do NOT repeat these points):\n${request.recentRoundPosts}\n`
+    : "";
+
+  const postIncentive = buildPostIncentive(request);
+
   return `YOUR FEED:\n${feedText}\n\n` +
+    `${recentContext}${postIncentive}` +
     `AVAILABLE ACTIONS: ${request.availableActions.join(", ")}\n\n` +
     `Choose your action. Respond as JSON:\n` +
     `{\n` +
@@ -617,6 +665,8 @@ export function buildDecisionRequest(
     roundNum: resolvedRoundNum,
     actor: {
       name: actor.name,
+      archetype: actor.archetype ?? undefined,
+      profession: actor.profession ?? undefined,
       personality: actor.personality,
       stance: actor.stance,
       gender: actor.gender ?? undefined,

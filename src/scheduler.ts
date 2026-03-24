@@ -241,7 +241,7 @@ async function resolveBackendDecision(
       }
     }
 
-    const webContext = formatSearchResults(executions, opts.config.search.cutoffDate);
+    const webContext = formatSearchResults(executions, opts.config.search.cutoffDate, job.route.tier as "A" | "B");
     if (webContext) {
       request = { ...request, webContext };
     }
