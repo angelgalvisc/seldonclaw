@@ -134,6 +134,9 @@ One file. Open it with `sqlite3`.
 - **Social dynamics**: feed ranking, echo chambers, mutes, blocks, reports, narrative fatigue, and out-of-network exposure.
 - **Event injection**: drop in shocks mid-simulation, from policy changes to viral moments.
 - **Actor interviews**: ask an agent why it changed its mind after the run ends.
+- **Investigative reports**: a ReACT-style agent iteratively queries the simulation, interviews actors, and produces analytical reports.
+- **Round evaluator**: independent quality scoring after each round with corrective guidance injected into the next round's prompts (Generator-Evaluator pattern).
+- **Resilient execution**: LLM call retries with exponential backoff, idle fallback, JSON repair, and failure diagnostics persisted in SQLite.
 - **Portable actors**: export evolved agents with beliefs, memories, and decision traces, then import them into another run.
 - **Single-file audit trail**: runs, rounds, posts, search cache, telemetry, and reports all anchor back to SQLite.
 
@@ -189,6 +192,7 @@ The design layer uses LLM to propose actors and communities from the brief and s
 | `inspect` | Inspect actor context, beliefs, posts, and recent state |
 | `report` | Generate a report for a completed run |
 | `interview` | Interview a simulated actor |
+| `investigate` | ReACT-style investigative report: iteratively queries data, interviews actors, and synthesizes findings |
 | `shell` | Interactive REPL for NL->SQL, schema inspection, and interviews |
 | `history` | Show assistant-tracked simulation history |
 | `export-agent` | Export a simulated actor as a portable bundle |
@@ -209,11 +213,22 @@ The design layer uses LLM to propose actors and communities from the brief and s
 
 ## Roadmap
 
-PublicMachina is actively evolving. The current engine already ships with grounded agents, replay/resume, 3-tier cognition, and a conversational operator. The next evolution focuses on three areas:
+PublicMachina is actively evolving. The current engine ships with grounded agents, replay/resume, 3-tier cognition, a conversational operator, round quality evaluation, resilient LLM execution, and investigative reporting.
 
-- **Temporal memory** — agent memories that track validity windows, contradictions, and changing relationships over time, powered by a graph-based memory layer (Graphiti) alongside the existing SQLite ledger.
-- **Feed realism** — social-representation embeddings (TwHIN-BERT) as an additional ranking signal so each agent sees a personalized, more realistic feed instead of a uniform timeline.
-- **Cast enrichment** — stronger grounding of actor profiles and communities using source documents and graph-backed entity validation.
+### Already implemented (feature-flagged)
+
+- **Temporal memory infrastructure** — episode derivation, outbox pattern, retrieval with per-tier context budgets, and fallback. Graphiti provider ready for FalkorDB integration.
+- **Feed realism** — TwHIN-BERT social-representation embeddings as an additional ranking signal (`social-hybrid` and `twhin-hybrid` algorithms). Requires `@huggingface/transformers`.
+- **Cast enrichment** — 2-step LLM entity validation (extract + judge with few-shot calibration), graph-backed type validation, community-influenced follow/sentiment.
+- **Round evaluator** — independent quality scoring per round (diversity, evolution, consistency, conflict) with corrective guidance injection. Enabled by default.
+- **Resilience layer** — retry with backoff, idle fallback, optional JSON repair, failure message persistence.
+- **ReportAgent** — ReACT-style investigative reports via `investigate` command.
+- **Sprint decomposition** — narrative checkpoints for runs >10 rounds.
+
+### Next priorities
+
+- **Graphiti spike** — connect the temporal memory provider to FalkorDB and validate whether graph-based memory improves agent coherence.
+- **Evaluation framework** — 5 benchmark scenarios with 10 formal metrics for A/B comparison of memory, feed, and cast variants.
 
 All changes are gated behind formal evaluation: no new layer becomes default unless it measurably improves simulation quality without breaking cost or latency constraints. Full plan, architecture decisions, phases, risks, and success criteria live in [PLAN_PRODUCT_EVOLUTION.md](PLAN_PRODUCT_EVOLUTION.md).
 

@@ -241,7 +241,7 @@ Replay/resume support now relies on two persisted artifacts in SQLite:
 - `snapshots` capture round checkpoints plus PRNG state and fired threshold triggers for resume.
 - `run_scaffolds` capture the pre-round simulation scaffold so a copied database can replay a run against `decision_cache`.
 
-SQLite schema evolution is versioned through `PRAGMA user_version` (currently v5). Fresh databases are created at the current schema version, and legacy databases are upgraded forward through explicit migrations before the store is used.
+SQLite schema evolution is versioned through `PRAGMA user_version` (currently v6). Fresh databases are created at the current schema version, and legacy databases are upgraded forward through explicit migrations before the store is used. Migration v6 adds `failure_message` to `run_manifest` for post-mortem diagnosis.
 
 ### Opt-in subsystems (feature-flagged, disabled by default)
 
@@ -251,7 +251,15 @@ Three subsystems were added as part of the product evolution plan. All are disab
 
 **TwHIN-BERT feed** (`config.feed.twhin.enabled`): Replaces the default hash-based embedding provider with Twitter/twhin-bert-base for social-representation embeddings. Requires `@huggingface/transformers` to be installed. Enables `social-hybrid` and `twhin-hybrid` feed algorithms that combine social-representation similarity, trace-aware scoring, and community affinity signals.
 
-**Cast enrichment**: Enriched source summaries (with named entities and central claims) improve cast design grounding. Graph-backed entity type validation cross-references claim predicates. Community-influenced follow probability and sentiment bias replace flat random initialization.
+**Cast enrichment**: Enriched source summaries (with named entities and central claims) improve cast design grounding. Graph-backed entity type validation cross-references claim predicates. Community-influenced follow probability and sentiment bias replace flat random initialization. Entity extraction uses a 2-step LLM pipeline: extract with grounding + LLM-as-judge validation with few-shot calibration from real simulation data.
+
+**Round evaluator** (`config.simulation.roundEvaluator.enabled`, default: true): After each round, an independent LLM evaluates output quality across four dimensions (diversity, evolution, consistency, conflict). If quality drops below threshold, corrective guidance is injected into the next round's decision prompts. Implements the Generator-Evaluator pattern from Anthropic's harness design research.
+
+**Resilience layer**: Decision execution in the scheduler wraps `backend.decide()` with retry (3 attempts, exponential backoff) and idle fallback. JSON repair in `completeJSON()` is opt-in via `allowRepair` flag (enabled for simulation decisions only). Protection telemetry tracks `retryCount` and `protectionFired` per decision for progressive simplification.
+
+**Sprint decomposition** (`sprint-decomposition.ts`): For runs >10 rounds, divides the simulation into sprints of ~5 rounds with narrative checkpoints. Each sprint has objectives and success criteria. Foundation for long-running simulation coherence.
+
+**ReportAgent** (`report-agent.ts`, CLI: `investigate`): ReACT-style orchestrator that iteratively queries the simulation database, interviews actors, and synthesizes investigative reports. Available as `investigate` command and as an operator tool.
 
 ### Pipeline concurrency
 
@@ -267,7 +275,8 @@ The simulation database centers on:
 - `posts`, `exposures`, `rounds`, `runs`
 - `search_cache`, `search_requests`
 - `decision_traces`, `run_scaffolds`, `snapshots`, `decision_cache`
-- `temporal_memory_outbox`, `temporal_memory_sync_state` (schema v5, opt-in)
+- `temporal_memory_outbox`, `temporal_memory_sync_state` (schema v5+, opt-in)
+- `failure_message` on `run_manifest` (schema v6, for post-mortem diagnosis)
 - telemetry, embeddings, moderation, and narrative state
 
 The full schema references already live in:
