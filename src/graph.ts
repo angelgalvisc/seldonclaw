@@ -418,6 +418,20 @@ Important: be balanced in your judgments.
 - Generic groups without specific identity are NOT valid ("Critics", "Analysts")
 - Descriptions of dynamics are NOT valid ("a supply shock as ETF demand...")
 
+CALIBRATION EXAMPLES (from real simulations):
+- "BlackRock" → KEEP (specific organization)
+- "Commissioner Hester Peirce" → REVISE → "Hester Peirce" (remove title for social media name)
+- "a supply shock as ETF demand absorbs available Ethereum from exchanges" → REMOVE (sentence fragment, not an entity)
+- "Crypto Twitter" → KEEP (identifiable social collective)
+- "Ethereum's value proposition is more complex to explain to traditional investors" → REMOVE (opinion/description, not entity)
+- "SEC Chairman Gary Gensler" → REVISE → "Gary Gensler" (remove title)
+- "Regulatory clarity" → REMOVE (abstract concept)
+- "ARK Invest" → KEEP (specific organization)
+- "The decision" → REMOVE (generic noun)
+- "Peter Brandt" → KEEP (specific person)
+- "Approval of these products does not constitute an endorsement" → REMOVE (quote fragment, not entity)
+- "this validates Ethereum as an institutional-grade asset class" → REMOVE (claim, not entity)
+
 Source document context:
 ${sourceText.slice(0, 1500)}
 

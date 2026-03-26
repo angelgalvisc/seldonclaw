@@ -53,6 +53,12 @@ export interface SimulationConfig {
   peakHours: number[];
   offPeakHours: number[];
   costCapUsd?: number;
+  /** Round evaluator: independent quality scoring after each round (Generator-Evaluator pattern) */
+  roundEvaluator?: {
+    enabled: boolean;
+    /** Minimum overall score (1-5) to consider a round "healthy" */
+    healthThreshold?: number;
+  };
 }
 
 export interface CognitionConfig {

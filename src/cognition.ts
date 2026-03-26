@@ -27,7 +27,7 @@ import type {
 } from "./db.js";
 import { stableId } from "./db.js";
 import type { CognitionConfig } from "./config.js";
-import type { LLMClient, LLMResponse } from "./llm.js";
+import { type LLMClient, type LLMResponse, MockLLMClient } from "./llm.js";
 import {
   PLATFORM_ACTIONS,
   type PlatformAction,
@@ -73,6 +73,8 @@ export interface DecisionRequest {
   searchEligible?: boolean;
   /** Previous search queries from earlier rounds, to avoid duplication */
   previousSearchQueries?: string[];
+  /** Quality guidance from round evaluator — corrective hints for this round */
+  roundGuidance?: string;
 }
 
 export interface DecisionResponse {
@@ -100,6 +102,8 @@ export interface CognitionBackend {
   shutdown(): Promise<void>;
   decide(request: DecisionRequest): Promise<DecisionResponse>;
   interview(actorContext: string, question: string): Promise<string>;
+  /** Access the underlying LLM client (needed by round evaluator) */
+  readonly llm: LLMClient;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -263,14 +267,16 @@ export interface DirectLLMConfig {
  */
 export class DirectLLMBackend implements CognitionBackend {
   constructor(
-    private llm: LLMClient,
+    private _llm: LLMClient,
     private store: GraphStore,
     private config: DirectLLMConfig
   ) {}
 
+  get llm(): LLMClient { return this._llm; }
+
   async start(): Promise<void> {
     // Verify the simulation provider is available
-    if (!this.llm.hasProvider("simulation")) {
+    if (!this._llm.hasProvider("simulation")) {
       throw new Error(
         "DirectLLMBackend requires the 'simulation' provider. " +
         "Set the API key for the simulation provider in your environment."
@@ -286,7 +292,7 @@ export class DirectLLMBackend implements CognitionBackend {
     const systemPrompt = buildDecisionSystemPrompt(request);
     const userPrompt = buildDecisionUserPrompt(request);
 
-    const response = await this.llm.completeJSON<DecisionResponse>(
+    const response = await this._llm.completeJSON<DecisionResponse>(
       "simulation",
       userPrompt,
       {
@@ -313,7 +319,7 @@ export class DirectLLMBackend implements CognitionBackend {
       `Stay in character. Answer honestly based on your persona's beliefs, ` +
       `experiences, and worldview. Be conversational and authentic.`;
 
-    const response = await this.llm.complete("simulation", question, {
+    const response = await this._llm.complete("simulation", question, {
       system: systemPrompt,
       temperature: 0.8,
       maxTokens: 1024,
@@ -374,6 +380,7 @@ export class MockCognitionBackend implements CognitionBackend {
   private defaultDecision: DecisionResponse = { action: "idle", reasoning: "mock default" };
   public decideCalls: DecisionRequest[] = [];
   public interviewCalls: Array<{ context: string; question: string }> = [];
+  readonly llm: LLMClient = new MockLLMClient();
 
   async start(): Promise<void> {}
   async shutdown(): Promise<void> {}
@@ -546,7 +553,7 @@ ${diversitySection}
 
 INTERACTION CONTEXT:
 ${request.simContext}
-${webContextSection}${temporalMemorySection}${searchSection}
+${webContextSection}${temporalMemorySection}${searchSection}${request.roundGuidance ? `\nQUALITY GUIDANCE (from simulation evaluator):\n${request.roundGuidance}\n` : ""}
 You must decide what to do next. Choose ONE action from the available actions.
 Respond with valid JSON only.`;
 }
@@ -564,11 +571,13 @@ function buildPostIncentive(request: DecisionRequest): string {
 }
 
 function buildDecisionUserPrompt(request: DecisionRequest): string {
+  // Context reset: show fewer, more focused feed items (Anthropic harness pattern)
+  // Less context = better decisions. Show top 7 items, 80 chars each.
   const feedText = request.feed.length > 0
-    ? request.feed.slice(0, 10).map((item, i) => {
+    ? request.feed.slice(0, 7).map((item, i) => {
         const p = item.post;
-        return `${i + 1}. [${item.source}] @${p.authorId}: "${p.content.slice(0, 100)}" ` +
-               `(${p.likes}♡ ${p.reposts}↻ ${p.comments}💬, sentiment=${p.sentiment.toFixed(1)})`;
+        return `${i + 1}. [${item.source}] @${p.authorId}: "${p.content.slice(0, 80)}" ` +
+               `(${p.likes}♡ ${p.reposts}↻ sentiment=${p.sentiment.toFixed(1)})`;
       }).join("\n")
     : "(empty feed)";
 

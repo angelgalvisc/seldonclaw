@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { SQLiteGraphStore } from "../src/db.js";
 import type { ActorRow, Post } from "../src/db.js";
 import { MockCognitionBackend } from "../src/cognition.js";
+import { MockLLMClient } from "../src/llm.js";
 import type {
   CognitionBackend,
   DecisionRequest,
@@ -125,6 +126,7 @@ afterEach(() => {
 class TrackingBackend implements CognitionBackend {
   inflight = 0;
   maxInflight = 0;
+  readonly llm = new MockLLMClient();
 
   constructor(
     private opts: {

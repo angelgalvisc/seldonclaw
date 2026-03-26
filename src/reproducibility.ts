@@ -13,6 +13,7 @@
 import { createHash } from "node:crypto";
 import type { PRNG as PRNGInterface, GraphStore } from "./db.js";
 import type { CognitionBackend, DecisionRequest, DecisionResponse } from "./cognition.js";
+import { MockLLMClient, type LLMClient } from "./llm.js";
 
 // ═══════════════════════════════════════════════════════
 // PRNG — xoshiro128** (32-bit, fast, good distribution)
@@ -106,6 +107,8 @@ function rotl(x: number, k: number): number {
  * - prompt_version prevents silent replay after prompt template changes
  */
 export class RecordedBackend implements CognitionBackend {
+  readonly llm: LLMClient = new MockLLMClient();
+
   constructor(
     private store: GraphStore,
     private modelId: string,

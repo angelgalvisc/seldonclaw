@@ -89,6 +89,8 @@ export interface RoundSchedulerOptions {
   lookbackRounds?: number;
   searchProvider?: SearchProvider | null;
   temporalMemoryProvider?: TemporalMemoryProvider | null;
+  /** Quality guidance from round evaluator — injected into decision prompts */
+  roundGuidance?: string | null;
 }
 
 export async function scheduleRoundActions(
@@ -163,6 +165,7 @@ export async function scheduleRoundActions(
         opts.roundNum
       ),
       previousSearchQueries,
+      ...(opts.roundGuidance ? { roundGuidance: opts.roundGuidance } : {}),
     };
     const searchEligible = opts.searchProvider
       ? canActorSearch(actor, route.tier, opts.config.search)
@@ -223,6 +226,8 @@ async function resolveBackendDecision(
 ): Promise<{
   decision: DecisionResponse;
   searchRequests: SearchRequestRow[];
+  protectionFired: "none" | "retry_succeeded" | "idle_fallback";
+  retryCount: number;
 }> {
   let request = job.request;
   let searchRequests: SearchRequestRow[] = [];
@@ -281,12 +286,19 @@ async function resolveBackendDecision(
   }
 
   // Resilient decision execution: retry transient/parse errors, fallback to idle
+  // Protection telemetry: track when safeguards fire for progressive simplification
   const MAX_DECIDE_ATTEMPTS = 3;
   let decision: Awaited<ReturnType<typeof opts.backend.decide>> | undefined;
+  let retryCount = 0;
+  let protectionFired: "none" | "retry_succeeded" | "idle_fallback" = "none";
 
   for (let attempt = 0; attempt < MAX_DECIDE_ATTEMPTS; attempt++) {
     try {
       decision = await opts.backend.decide(request);
+      if (attempt > 0) {
+        retryCount = attempt;
+        protectionFired = "retry_succeeded";
+      }
       break;
     } catch (err) {
       const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
@@ -302,21 +314,24 @@ async function resolveBackendDecision(
       const isJsonParse = msg.includes("failed to parse llm json");
 
       if ((isTransient || isJsonParse) && attempt < MAX_DECIDE_ATTEMPTS - 1) {
+        retryCount = attempt + 1;
         await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, attempt)));
         continue;
       }
       // Non-recoverable or final attempt exhausted — log and fall through to idle
+      protectionFired = "idle_fallback";
       break;
     }
   }
 
   if (!decision) {
+    protectionFired = "idle_fallback";
     decision = {
       action: "idle" as const,
       content: "",
-      reasoning: "[SYSTEM] Decision failed after retries. Actor idled this round.",
+      reasoning: `[SYSTEM] Decision failed after ${retryCount + 1} attempts. Actor idled this round.`,
     } as Awaited<ReturnType<typeof opts.backend.decide>>;
   }
 
-  return { decision, searchRequests };
+  return { decision, searchRequests, protectionFired, retryCount };
 }

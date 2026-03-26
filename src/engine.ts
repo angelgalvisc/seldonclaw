@@ -56,6 +56,7 @@ import {
 } from "./time-policy.js";
 import { SimulationCancelledError, throwIfStopRequested } from "./run-control.js";
 import { resolveProviderConfig } from "./provider-selection.js";
+import { evaluateRound, buildRoundGuidance, type RoundEvaluation } from "./round-evaluator.js";
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -173,6 +174,9 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
   // Simulation start time (round 0 = 2024-01-01T00:00:00 in configured timezone)
   const startTime = new Date("2024-01-01T00:00:00");
   let completedRounds = startRound;
+
+  // Round evaluator guidance — injected into next round's decision prompts
+  let roundGuidance: string | null = null;
 
   // Threshold triggers fire once and are remembered across rounds.
   const firedTriggers = new Set<string>(opts.initialFiredTriggers ?? []);
@@ -428,6 +432,7 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
         actorBeliefsMap,
         searchProvider,
         temporalMemoryProvider,
+        roundGuidance,
       });
 
       throwIfStopRequested({
@@ -625,6 +630,17 @@ export async function runSimulation(opts: EngineOptions): Promise<EngineResult> 
       // Failures are logged but do not stop the simulation.
       if (temporalMemoryProvider) {
         await flushOutboxToProvider(store, runId, roundNum, temporalMemoryProvider);
+      }
+
+      // Round evaluator: independent quality assessment (Generator-Evaluator pattern)
+      // Runs after temporal memory flush, before snapshot. Failures are non-fatal.
+      if (config.simulation.roundEvaluator?.enabled && roundNum < numRounds - 1) {
+        try {
+          const evaluation = await evaluateRound(backend.llm, store, runId, roundNum);
+          roundGuidance = buildRoundGuidance(evaluation);
+        } catch {
+          // Evaluator failure is non-fatal
+        }
       }
 
       completedRounds = roundNum + 1;
