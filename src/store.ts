@@ -300,6 +300,7 @@ export interface GraphStore {
   getEntityTypes(): EntityType[];
   getEdgeTypes(): EdgeType[];
   getAllActiveEntities(): Entity[];
+  getAllEntityTypeNames(): string[];
 
   // Report queries
   getPostsPerRound(runId: string): Array<{
@@ -2181,6 +2182,13 @@ export class SQLiteGraphStore implements GraphStore {
     return this.db
       .prepare(`SELECT * FROM entities WHERE merged_into IS NULL ORDER BY id`)
       .all() as Entity[];
+  }
+
+  getAllEntityTypeNames(): string[] {
+    const rows = this.db
+      .prepare(`SELECT name FROM entity_types`)
+      .all() as Array<{ name: string }>;
+    return rows.map((r) => r.name);
   }
 
   // ─── Report queries ───

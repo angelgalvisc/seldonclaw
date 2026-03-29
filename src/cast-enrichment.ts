@@ -94,6 +94,8 @@ export function validateEntityTypes(
   store: GraphStore
 ): Array<{ entityId: string; name: string; currentType: string; suggestedType: string; reason: string }> {
   const entities = store.getAllActiveEntities();
+  // Only suggest types that actually exist in the entity_types table to avoid FK violations
+  const validTypes = new Set(store.getAllEntityTypeNames());
   const corrections: Array<{
     entityId: string;
     name: string;
@@ -126,7 +128,8 @@ export function validateEntityTypes(
 
     const suggestedType = inferTypeFromSignals(personSignals, orgSignals, mediaSignals);
 
-    if (suggestedType && suggestedType !== entity.type) {
+    // Only apply correction if the suggested type exists in the DB's entity_types table
+    if (suggestedType && suggestedType !== entity.type && validTypes.has(suggestedType)) {
       corrections.push({
         entityId: entity.id,
         name: entity.name,

@@ -297,13 +297,51 @@ async function designSimulationTool(
   }
 
   const llm = createFeatureLlm(runtime.config, { mock: runtime.mock, feature: "design" });
-  const result = await designSimulationArtifacts({
-    config: runtime.config,
-    brief,
-    llm,
-    docsPath: stringifyArg(args.docsPath) ?? undefined,
-    workspace: runtime.workspace,
-  });
+  const docsPathArg = stringifyArg(args.docsPath) ?? undefined;
+  const attempts = [brief];
+  const compactedBrief = compactDesignBrief(brief);
+  if (compactedBrief !== brief) {
+    attempts.push(compactedBrief);
+  }
+
+  let result: Awaited<ReturnType<typeof designSimulationArtifacts>> | null = null;
+  let usedCompactedRetry = false;
+  let lastError: unknown = null;
+
+  for (let index = 0; index < attempts.length; index += 1) {
+    const candidateBrief = attempts[index]!;
+    try {
+      result = await designSimulationArtifacts({
+        config: runtime.config,
+        brief: candidateBrief,
+        llm,
+        docsPath: docsPathArg,
+        workspace: runtime.workspace,
+      });
+      usedCompactedRetry = index > 0;
+      break;
+    } catch (error) {
+      lastError = error;
+      if (index === attempts.length - 1 || !shouldRetryDesign(error)) {
+        const retainedStateNote = runtime.taskState.activeDesign
+          ? `No se creó un diseño nuevo. El diseño activo sigue siendo "${runtime.taskState.activeDesign.title}".`
+          : "No se creó un diseño nuevo.";
+        return {
+          status: "error",
+          summary: "Tool design_simulation failed.",
+          details: `${error instanceof Error ? error.message : "Tool execution failed."}\n\n${retainedStateNote}`,
+        };
+      }
+    }
+  }
+
+  if (!result) {
+    return {
+      status: "error",
+      summary: "Tool design_simulation failed.",
+      details: lastError instanceof Error ? lastError.message : "Tool execution failed.",
+    };
+  }
 
   // Apply experimental feature overrides to the generated config
   if (args.feedAlgorithm || args.twhinEnabled !== undefined || args.temporalMemoryEnabled !== undefined) {
@@ -393,6 +431,9 @@ async function designSimulationTool(
     status: "completed",
     summary: `Designed "${result.spec.title}" and saved artifacts.`,
     details: [
+      usedCompactedRetry
+        ? "Recovered after an initial design failure by retrying with a compacted version of the brief."
+        : null,
       preview.trim(),
       `Spec: ${result.specPath}`,
       `Config: ${result.configPath}`,
@@ -408,7 +449,9 @@ async function designSimulationTool(
         ? `Communities: ${castDesign.communityProposals.map((c) => c.name).join(", ")}`
         : "Communities: auto-detected from topics",
       `Next step available: run_simulation`,
-    ].join("\n"),
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n"),
   };
 }
 
@@ -659,6 +702,26 @@ async function runSimulationTool(
         `Database: ${dbPath}`,
         `Rounds: ${result.totalRounds}`,
         `Graph revision: ${result.graphRevisionId}`,
+      ].join("\n"),
+    };
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    runtime.updateTaskState(
+      setFailedRunState(runtime.workspace, {
+        title: designed.title,
+        runId,
+        dbPath,
+        message: errorMessage,
+        failedAt: new Date().toISOString(),
+      })
+    );
+    return {
+      status: "error",
+      summary: `Simulation "${designed.title}" failed with an unexpected error.`,
+      details: [
+        `Run ID: ${runId}`,
+        `Database: ${dbPath}`,
+        `Error: ${errorMessage}`,
       ].join("\n"),
     };
   } finally {
@@ -1097,6 +1160,41 @@ function stringifyArg(value: unknown): string | null {
 
 function booleanArg(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function shouldRetryDesign(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    /Failed to parse LLM JSON response/i.test(message) ||
+    /Simulation design validation failed/i.test(message)
+  );
+}
+
+function compactDesignBrief(brief: string): string {
+  const lines = brief.replace(/\r/g, "").split("\n");
+  const compacted: string[] = [];
+  let blankPending = false;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) {
+      if (!blankPending && compacted.length > 0) {
+        compacted.push("");
+      }
+      blankPending = true;
+      continue;
+    }
+
+    blankPending = false;
+    if (/^[-*]\s+/.test(trimmed)) {
+      compacted.push(`- ${trimmed.replace(/^[-*]\s+/, "").replace(/\s+/g, " ")}`);
+      continue;
+    }
+
+    compacted.push(trimmed.replace(/\s+/g, " "));
+  }
+
+  return compacted.join("\n").trim();
 }
 
 async function materializeSourceDocs(
