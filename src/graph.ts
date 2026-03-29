@@ -455,11 +455,16 @@ Return JSON:
   ]
 }`;
 
+  // Give the judge enough room to evaluate every entity thoroughly.
+  // Each evaluation needs ~100 tokens (name + verdict + reason + JSON overhead).
+  // Never go below 2048 for small sets; scale linearly for large ones.
+  const judgeMaxTokens = Math.max(2048, entityMap.size * 100);
+
   let response: EntityValidationResponse;
   try {
     const result = await llm.completeJSON<EntityValidationResponse>("analysis", prompt, {
       temperature: 0.0,
-      maxTokens: 2048,
+      maxTokens: judgeMaxTokens,
     });
     response = result.data;
   } catch {

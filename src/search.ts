@@ -332,10 +332,18 @@ export function canActorSearch(
     return true;
   }
 
+  // Profession matching uses substring containment — an actor with profession
+  // "Equity Research Analyst (Cybersecurity/Defense Technology)" should match
+  // allowProfession "cybersecurity analyst". Both sides are already normalized
+  // to lowercase by normalizeToken().
+  const professionMatches = allowedProfessions.some(
+    (allowed) => profession.includes(allowed) || allowed.includes(profession)
+  );
+
   return (
     actorTokens.some((token) => allowActors.includes(token)) ||
     allowedArchetypes.includes(archetype) ||
-    allowedProfessions.includes(profession)
+    professionMatches
   );
 }
 
