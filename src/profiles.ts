@@ -235,7 +235,17 @@ export async function generateProfiles(
     simStartTime = new Date().toISOString(),
   } = options;
 
-  const candidates = buildProfileCandidates(store, focusActors, maxActors, castSeeds);
+  let candidates = buildProfileCandidates(store, focusActors, maxActors, castSeeds);
+
+  // Cast expansion: if we have fewer candidates than requested, ask the LLM
+  // to propose additional actors that fit the existing communities and brief
+  if (maxActors > 0 && candidates.length < maxActors) {
+    const deficit = maxActors - candidates.length;
+    const expanded = await expandCast(llm, candidates, castSeeds, communityProposals, hypothesis, deficit);
+    candidates = [...candidates, ...expanded];
+    if (maxActors > 0) candidates = candidates.slice(0, maxActors);
+  }
+
   if (candidates.length === 0) {
     return {
       actorsCreated: 0,
@@ -589,6 +599,110 @@ function buildProfileCandidates(
 
   // Priority 4: actorCount cap
   return maxActors > 0 ? candidates.slice(0, maxActors) : candidates;
+}
+
+/**
+ * Cast expansion: when seeds + graph entities < requested actor count,
+ * ask the LLM to propose additional actors that complement the existing cast.
+ * Uses the communities and existing actors as context to produce coherent additions.
+ */
+async function expandCast(
+  llm: LLMClient,
+  existingCandidates: ProfileCandidate[],
+  castSeeds: Array<{ name: string; type: string; role: string; stance?: string; community?: string }> | undefined,
+  communityProposals: Array<{ name: string; description?: string }> | undefined,
+  hypothesis: string,
+  deficit: number
+): Promise<ProfileCandidate[]> {
+  if (deficit <= 0) return [];
+
+  const existingNames = existingCandidates.map((c) => c.entity.name).join(", ");
+  const communities = (communityProposals ?? []).map((c) => `${c.name}: ${c.description ?? ""}`).join("\n");
+
+  const prompt = `You are expanding the cast for a social simulation.
+
+Scenario hypothesis: ${hypothesis}
+
+Existing actors (${existingCandidates.length}):
+${existingNames}
+
+Communities in this simulation:
+${communities || "No communities specified."}
+
+I need ${deficit} additional actors to complete the cast. These actors should:
+1. Fill gaps in the existing cast — roles/perspectives not yet represented
+2. Belong to the communities listed above (distribute evenly)
+3. Be realistic and identifiable (real organizations, real job titles, plausible personas)
+4. Include a mix of stances (bullish, bearish, cautious, skeptical, neutral)
+5. Prioritize Tier B (specialized practitioners) and Tier C (ecosystem observers) roles
+6. NOT duplicate any existing actor
+
+Return JSON:
+{
+  "actors": [
+    {
+      "name": "Actor Name",
+      "type": "person|organization|media|institution",
+      "role": "Their professional role or function",
+      "stance": "bullish|bearish|cautious|skeptical|neutral",
+      "community": "Which community they belong to"
+    }
+  ]
+}`;
+
+  interface ExpansionResponse {
+    actors?: Array<{
+      name?: string;
+      type?: string;
+      role?: string;
+      stance?: string;
+      community?: string;
+    }>;
+  }
+
+  try {
+    const result = await llm.completeJSON<ExpansionResponse>("analysis", prompt, {
+      temperature: 0.3,
+      maxTokens: Math.max(2048, deficit * 120),
+    });
+
+    const actors = result.data.actors;
+    if (!actors || !Array.isArray(actors)) return [];
+
+    const seen = new Set(existingCandidates.map((c) => normalizeCandidateName(c.entity.name)));
+    const expanded: ProfileCandidate[] = [];
+
+    for (const actor of actors) {
+      if (!actor.name || !actor.role) continue;
+      const normalized = normalizeCandidateName(actor.name);
+      if (!normalized || seen.has(normalized)) continue;
+
+      expanded.push({
+        entity: {
+          id: stableId("cast-expansion", actor.name),
+          type: actor.type || "person",
+          name: actor.name.trim(),
+          attributes: JSON.stringify({
+            role: actor.role,
+            stance: actor.stance ?? "neutral",
+            community: actor.community,
+            source: "cast_expansion",
+          }),
+          merged_into: null,
+        },
+        entityId: null,
+        claimTexts: [`Cast expansion: ${actor.role}`],
+      });
+      seen.add(normalized);
+
+      if (expanded.length >= deficit) break;
+    }
+
+    return expanded;
+  } catch {
+    // If expansion fails, continue with what we have — non-fatal
+    return [];
+  }
 }
 
 function createFocusActorSeedEntity(label: string): Entity {
